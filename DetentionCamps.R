@@ -68,15 +68,10 @@ xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
 # crop raster to extent of vector data
 raster_china <- crop(raster_10m, china)
 
-ggplot() +
-  ggRGB(raster_crop, 1, ggLayer=T, geom_raster=T) +
-  geom_sf(data = camps_osm$osm_polygons, fill="red", aes(alpha= 0.6))
-
-ggplot() +
-  # forceCat - forces raster values to be categorical (will be converted to factor if needed).
-  #ggR(raster_china, 1, ggLayer=T, geom_raster=T) +
-  geom_sf(data=camps_osm$osm_polygons, fill="red", aes(alpha= 0.6)) +
-  geom_polygon(data=xianjiang, aes(alpha=0.2, x=long, y=lat))
+ggR(raster_china) +
+  geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+  geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2) 
+  
 
 # make interactive map with leaflet
 
