@@ -5,126 +5,154 @@
 
 # Load required packages
 library(dplyr)
-
-# Chinese Google Maps
-# white tiles over detention camps
-
-# library(devtools)
-# install_github('badbye/baidumap')
-# # geoChina - package for coordinate conversion
-# 
-# p <- getBaiduMap(c(lon=75.86388889, lat=39.35919444))	
-# library(ggmap)
-# ggmap(p)
-
-
-#### OSM data ####
-# camp locations & their area
-library(osmdata)
-
-# bounding box for the area of Xinjiang, using polygon shaped output
-bb <- getbb("Xinjiang", format_out = "polygon")
-
-# download camps as features
-# convert bb to an overpass query object (API)
-camps_osm <- opq(bb) %>%
-  add_osm_feature(key = "prison_camp", value = "re-education") %>%
-  # output as simple features object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
-  osmdata_sf()
-
-# plotting
-library(ggmap)
 library(ggplot2)
 library(RStoolbox)
-
-# background map
-map <- get_map(getbb("Xinjiang"), source = "osm", color = "color", maptype="satellite")
-
-# naturalearthdata
-library(rnaturalearth)
-raster_10m <- ne_download(scale = 10, type = 'NE1_HR_LC', category = 'raster')
-plot(raster_10m)
-
-ggmap(map) +
- # geom_raster(raster_10m) +
-  geom_sf(data = camps_osm$osm_polygons, 
-          # indicates that the aesthetic mappings of the spatial object osm_polygons has to be used
-          inherit.aes = FALSE,
-          colour = "red",
-          fill = "red",
-          alpha = 0.5) +
-  labs(x = "", y = "") +
-  coord_sf(xlim = c(75.00, 100.00), ylim = c(36.00, 48.00))
+library(raster)
+library(rgdal)
 
 
-# vector data on top of raster data
-# download vector data of china 
-china <- getData("GADM", country = "CHN", level = 1)
-china$NAME_1
+#### DATA DOWNLOAD ####
 
-# filter on extent of Xianjiang
-xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
+# ## OSM
+# # camp locations & their area
+# library(osmdata)
+# 
+# # bounding box for the area of Xinjiang, using polygon shaped output
+# bb <- getbb("Xinjiang", format_out = "polygon")
+# 
+# # download camps as features
+# # convert bb to an overpass query object (API)
+# camps_osm <- opq(bb) %>%
+#   add_osm_feature(key = "prison_camp", value = "re-education") %>%
+#   # output as simple features object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
+#   osmdata_sf()
+# 
+# 
+# # plotting
+# library(ggmap)
+# 
+# # background map
+# map <- get_map(getbb("Xinjiang"), source = "osm", color = "color", maptype="satellite")
+# 
+# # naturalearthdata
+# library(rnaturalearth)
+# raster_10m <- ne_download(scale = 10, type = 'NE1_HR_LC', category = 'raster')
+# plot(raster_10m)
+# 
+# ggmap(map) +
+#  # geom_raster(raster_10m) +
+#   geom_sf(data = camps_osm$osm_polygons, 
+#           # indicates that the aesthetic mappings of the spatial object osm_polygons has to be used
+#           inherit.aes = FALSE,
+#           colour = "red",
+#           fill = "red",
+#           alpha = 0.5) +
+#   labs(x = "", y = "") +
+#   coord_sf(xlim = c(75.00, 100.00), ylim = c(36.00, 48.00))
+# 
+# 
+# # vector data on top of raster data
+# # download vector data of china 
+# china <- getData("GADM", country = "CHN", level = 1)
+# china$NAME_1
+# 
+# # filter on extent of Xianjiang
+# xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
+# 
+# # crop raster to extent of vector data
+# raster_china <- crop(raster_10m, china)
+# 
+# ggR(raster_china) +
+#   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+#   geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2) 
+#   
+# 
+# # make interactive map with leaflet
+# 
 
-# crop raster to extent of vector data
-raster_china <- crop(raster_10m, china)
 
-ggR(raster_china) +
-  geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2) 
-  
-
-# make interactive map with leaflet
-
-
-
-#### Camp data ####
+## CAMP DATA
 library(tidyverse)
 # https://docs.google.com/spreadsheets/d/e/2PACX-1vR48u6lKYD21gv6mqM-2dV2lL8axuJ3yG5QJr2KNfG6bZNhy2dXDib_ZyFl9QKwvTRP0EBKZPYczwp9/pubhtml#
 # v1 from 24.09.2020
-camps <- read_csv("data/CampDataset_v1.csv")
+campdata <- read_csv("data/CampDataset_v1.csv")
 
 # join with OSM area data
 
+# training data
+td_camps <- readOGR("data/td_camps.shp")
 
 
-#### Sentinel 2 data ####
+## SENTINEL 2 DATA
 # from sentinel hub: cloud cover less than 1%
-library(raster)
-library(RStoolbox)
+# dates: march 2017 - before construction started, march 2021 - most recent data
 
-# import SRTM DEM
+# import multi-band raster stack as rasterbrick
+sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348.tif")
+sen2021 <- brick("data/S2_L2A_2021_03_06_stack_B2348.tif")
+
+## STRM DEM
+# import rasterlayer
 dem <- raster("data/SRTM_N43E088.tif")
 
 plot(dem)
 
-# import multi-band raster stack
-sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348.tif")
-sen2021 <- brick("data/S2_L2A_2021_03_06_stack_B2348.tif")
 
-# reproject raster data to CRS WGS84
-sen2017_re <- projectRaster(sen2017, crs = crs(dem))
-sen2021_re <- projectRaster(sen2021, crs = crs(dem))
+
+#### REPROJECTION ####
+# reproject raster data to CRS WGS84 UTM
+sen2017_utm <- projectRaster(sen2017, crs = "+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0")
+sen2021_utm <- projectRaster(sen2021, crs = "+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0")
 
 # quick plotting
-plot(sen2017_re)
-plot(sen2021_re)
-
-plotRGB(sen2017_re, 3, 2, 1, stretch = "lin")
-plotRGB(sen2021_re, 3, 2, 1, stretch = "lin")
-
+plot(sen2017_utm)
+plot(sen2021_utm)
 
 # check raster values
-vals <- getValues(sen2021_re)
+vals <- getValues(sen2021_utm)
 hist(vals)
 
+# reproject dem
+dem_utm <- projectRaster(dem, crs = crs(sen2021_utm))
 
+# reproject vector data
+td_camps_utm <- spTransform(td_camps, crs(sen2021_utm))
+
+
+#### CROPPING ####
 # crop dem to same extent as raster data
-dem_crop <- crop(dem, extent(sen2021_re))
+dem_crop <- crop(dem_utm, extent(sen2021_utm))
 
 # resample dem to 10m spatial resolution of sentinel data
-dem_10m <- resample(dem_crop, sen2021_re)
+dem_10m <- resample(dem_crop, sen2021_utm)
 
 plot(dem_10m)
+
+# idea: mask out all high slopes
+
+
+
+#### DATA CLEANING ####
+typeof(td_camps$area)
+td_camps$area <- as.numeric(td_camps$area)
+sort(td_camps$area)
+
+# select biggest camp as study area
+td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
+
+
+
+#### PLOTTING ####
+plotRGB(sen2017_utm, 3, 2, 1, stretch = "lin")
+plotRGB(sen2021_utm, 3, 2, 1, stretch = "lin")
+
+
+
+
+#### spectral indices ####
+ndvi_2021 <- spectralIndices(sen2021_utm, red = 3, nir = 4, indices = "NDVI")
+plot(ndvi_2021)
+# idea: mask out all high NDVI values
 
 # calculate terrain features
 dem_slope <- terrain(dem_10m, opt = "slope")
@@ -133,37 +161,14 @@ dem_roughness <- terrain(dem_10m, opt = "roughness")
 
 plot(dem_slope)
 
-# idea: mask out all high slopes
-
-
-# #### import ALOS DSM
-# # https://www.eorc.jaxa.jp/ALOS/en/aw3d30/data/index.htm
-# 
-# dsm <- raster("ALPSMLC30_N043E088_DSM.tif")
-# 
-# plot(dsm)
-# 
-# # crop dsm to same extent as raster data
-# dsm_crop <- crop(dsm, extent(sen2020_re))
-# 
-# # resample dsm to 10m spatial resolution of sentinel data
-# dsm_10m <- resample(dsm_crop, sen2020_re)
-# 
-# plot(dsm_10m)
-
-
-#### spectral indices ####
-ndvi_2021 <- spectralIndices(sen2021_re, red = 3, nir = 4, indices = "NDVI")
-plot(ndvi_2021)
-# idea: mask out all high NDVI values
 
 
 #### classification ####
 # unsupervised classification
-unsup_2021 <- unsuperClass(sen2021_re, nClasses = 4)
+unsup_2021 <- unsuperClass(sen2021_utm, nClasses = 4)
 plot(unsup_2021$map)
 
-raster_stack <- stack(sen2021_re, ndvi_2021, dem_slope, dem_aspect, dem_roughness)
+raster_stack <- stack(sen2021_utm, ndvi_2021, dem_slope, dem_aspect, dem_roughness)
 
 # include additional environmental info into classification
 unsup_2021_stack <- unsuperClass(raster_stack, nClasses = 4)
