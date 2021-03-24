@@ -9,9 +9,11 @@ library(ggplot2)
 library(RStoolbox)
 library(raster)
 library(rgdal)
+library(tidyverse)
+library(sf)
 
 
-#### DATA DOWNLOAD ####
+#### DATA INPUT ####
 
 # ## OSM
 # # camp locations & their area
@@ -28,59 +30,73 @@ library(rgdal)
 #   osmdata_sf()
 # 
 # 
-# # plotting
-# library(ggmap)
-# 
-# # background map
-# map <- get_map(getbb("Xinjiang"), source = "osm", color = "color", maptype="satellite")
-# 
-# # naturalearthdata
-# library(rnaturalearth)
-# raster_10m <- ne_download(scale = 10, type = 'NE1_HR_LC', category = 'raster')
-# plot(raster_10m)
-# 
-# ggmap(map) +
-#  # geom_raster(raster_10m) +
-#   geom_sf(data = camps_osm$osm_polygons, 
-#           # indicates that the aesthetic mappings of the spatial object osm_polygons has to be used
-#           inherit.aes = FALSE,
-#           colour = "red",
-#           fill = "red",
-#           alpha = 0.5) +
-#   labs(x = "", y = "") +
-#   coord_sf(xlim = c(75.00, 100.00), ylim = c(36.00, 48.00))
-# 
-# 
-# # vector data on top of raster data
-# # download vector data of china 
-# china <- getData("GADM", country = "CHN", level = 1)
-# china$NAME_1
-# 
-# # filter on extent of Xianjiang
-# xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
-# 
-# # crop raster to extent of vector data
-# raster_china <- crop(raster_10m, china)
-# 
-# ggR(raster_china) +
+
+# plotting
+library(ggmap)
+
+# background map
+map <- get_map(getbb("Xinjiang"), source = "osm", color = "color", maptype="satellite")
+
+# naturalearthdata
+library(rnaturalearth)
+raster_10m <- ne_download(scale = 10, type = 'NE1_HR_LC', category = 'raster')
+plot(raster_10m)
+
+ggmap(map) +
+ # geom_raster(raster_10m) +
+  geom_sf(data = camps_osm$osm_polygons,
+          # indicates that the aesthetic mappings of the spatial object osm_polygons has to be used
+          inherit.aes = FALSE,
+          colour = "red",
+          fill = "red",
+          alpha = 0.5) +
+  labs(x = "", y = "") +
+  coord_sf(xlim = c(75.00, 100.00), ylim = c(36.00, 48.00))
+
+
+# vector data on top of raster data
+# download vector data of china
+china <- getData("GADM", country = "CHN", level = 1)
+china$NAME_1
+
+# filter on extent of Xianjiang
+xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
+
+# crop raster to extent of vector data
+raster_xianjiang <- crop(raster_10m, xianjiang)
+# reproject
+raster_utm <- projectRaster(raster_xianjiang, crs = crs(td_camps))
+xianjiang_utm <- spTransform(xianjiang, crs(td_camps))
+
+
+# ggR(raster_xianjiang) +
 #   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-#   geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2) 
-#   
-# 
-# # make interactive map with leaflet
-# 
+#   geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2)
+
+# make interactive map with leaflet
+
+ggR(raster_utm) +
+  geom_polygon(data=xianjiang_utm, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+  geom_sf(data=td_camps_sf, aes(fill="red"), col = "red", size = 2)
+
+# test with long lat
+td_camps_longlat <- st_transform(td_camps_sf, crs(raster_xianjiang))
+ggR(raster_xianjiang) +
+  geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+  geom_sf(data=td_camps_longlat, aes(fill="red"), col = "red", size = 2)
+
 
 
 ## CAMP DATA
-library(tidyverse)
-# https://docs.google.com/spreadsheets/d/e/2PACX-1vR48u6lKYD21gv6mqM-2dV2lL8axuJ3yG5QJr2KNfG6bZNhy2dXDib_ZyFl9QKwvTRP0EBKZPYczwp9/pubhtml#
+# https://xjdp.aspi.org.au/data/?tab=datasets#resources;xinjiangs-detention-facilities
 # v1 from 24.09.2020
 campdata <- read_csv("data/CampDataset_v1.csv")
 
 # join with OSM area data
 
 # training data
-td_camps <- readOGR("data/td_camps.shp")
+td_camps <- readOGR("data/td_camps_.shp")
+td_camps_sf <- st_read("data/td_camps_.shp")
 
 
 ## SENTINEL 2 DATA
@@ -88,7 +104,7 @@ td_camps <- readOGR("data/td_camps.shp")
 # dates: march 2017 - before construction started, march 2021 - most recent data
 
 # import multi-band raster stack as rasterbrick
-sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348.tif")
+sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348_UTM.tif")
 sen2021 <- brick("data/S2_L2A_2021_03_06_stack_B2348.tif")
 
 ## STRM DEM
@@ -101,8 +117,8 @@ plot(dem)
 
 #### REPROJECTION ####
 # reproject raster data to CRS WGS84 UTM
-sen2017_utm <- projectRaster(sen2017, crs = "+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0")
-sen2021_utm <- projectRaster(sen2021, crs = "+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0")
+sen2017_utm <- projectRaster(sen2017, crs = crs(td_camps))
+sen2021_utm <- projectRaster(sen2021, crs = crs(td_camps))
 
 # quick plotting
 plot(sen2017_utm)
@@ -113,10 +129,8 @@ vals <- getValues(sen2021_utm)
 hist(vals)
 
 # reproject dem
-dem_utm <- projectRaster(dem, crs = crs(sen2021_utm))
+dem_utm <- projectRaster(dem, crs = crs(td_camps))
 
-# reproject vector data
-td_camps_utm <- spTransform(td_camps, crs(sen2021_utm))
 
 
 #### CROPPING ####
@@ -133,12 +147,60 @@ plot(dem_10m)
 
 
 #### DATA CLEANING ####
+## td_camps
 typeof(td_camps$area)
 td_camps$area <- as.numeric(td_camps$area)
 sort(td_camps$area)
 
 # select biggest camp as study area
-td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
+td_aoi <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
+
+
+## campdata 
+# show NAs across columns
+sort(sapply(campdata, function(x) sum(is.na(x))))
+
+# delete columns with all NAs
+campdata <- dplyr::select(campdata, -c(Photos, Videos))
+
+str(campdata)
+
+campdata_v1 <- campdata
+
+# delete irrelevant columns: numbering in other dataset (shawn), distance to country centre, distance to pre-school, notes on security/recreational features, visitors, evidence, footage, decomissioning, highlight, desecuritisation
+campdata <- dplyr::select(campdata, -c(7:8, 10, 15:19, 21:27, 37, 41:42))
+
+# explanation of tier variable
+# tier 1: lower security re‑education camps
+# tier 2: dedicated re‑education camps
+# tier 3: detention centres
+# tier 4: maximum security prisons
+# see metadata: https://xjdp.aspi.org.au/resources/#resources;documenting-xinjiangs-detention-system
+
+# check correct types
+str(campdata)
+
+# distances as numeric
+campdata$`Distance to Industrial Park` <- as.numeric(campdata$`Distance to Industrial Park`)
+campdata$`Distance to residential buildings` <- as.numeric(campdata$`Distance to residential buildings`)
+
+# number of buldings as numeric
+campdata$`Number of Buildings in 2017` <- as.numeric(campdata$`Number of Buildings in 2017`)
+campdata$`Number of Buildings in 2018` <- as.numeric(campdata$`Number of Buildings in 2018`)
+campdata$`Number of Buildings in 2019` <- as.numeric(campdata$`Number of Buildings in 2019`)
+campdata$`Number of Buildings in 2020` <- as.numeric(campdata$`Number of Buildings in 2020`)
+
+# date
+library(zoo)
+# use as.yearmon function as as.Date requires a day
+campdata$`Date of Latest Sat Imagery` <- as.yearmon(campdata$`Date of Latest Sat Imagery`, format ="%y-%B")
+
+
+
+### EXPLORATORY ANALYSIS ####
+
+# spatially join non-spatial ASPI campdata with spatial camp polygons
+sp::merge(td_camps, campdata, by.x = )
 
 
 
@@ -146,6 +208,9 @@ td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
 plotRGB(sen2017_utm, 3, 2, 1, stretch = "lin")
 plotRGB(sen2021_utm, 3, 2, 1, stretch = "lin")
 
+ggR(sen2017) +
+ # geom_polygon(data=xianjiang_utm, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+  geom_sf(data=td_aoi, aes(fill="red"), col = "red", size = 2)
 
 
 
