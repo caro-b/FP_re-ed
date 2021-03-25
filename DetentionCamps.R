@@ -17,19 +17,20 @@ library(sf)
 
 # ## OSM
 # # camp locations & their area
-# library(osmdata)
+# 
 # 
 # # bounding box for the area of Xinjiang, using polygon shaped output
-# bb <- getbb("Xinjiang", format_out = "polygon")
+ bb <- getbb("Xinjiang", format_out = "polygon")
 # 
 # # download camps as features
 # # convert bb to an overpass query object (API)
 # camps_osm <- opq(bb) %>%
 #   add_osm_feature(key = "prison_camp", value = "re-education") %>%
-#   # output as simple features object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
+#   # output as simple flibrary(osmdata)eatures object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
 #   osmdata_sf()
-# 
-# 
+
+# area() for osm
+
 
 # plotting
 library(ggmap)
@@ -64,10 +65,13 @@ xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
 
 # crop raster to extent of vector data
 raster_xianjiang <- crop(raster_10m, xianjiang)
-# reproject
-raster_utm <- projectRaster(raster_xianjiang, crs = crs(td_camps))
-xianjiang_utm <- spTransform(xianjiang, crs(td_camps))
 
+# reproject
+# raster_utm <- projectRaster(raster_xianjiang, crs = crs(td_camps))
+# xianjiang_utm <- spTransform(xianjiang, crs(td_camps))
+td_camps_longlat <- spTransform(td_camps_repro, crs(raster_xianjiang))
+xianjiang_repro <- spTransform(xianjiang, crs(td_camps_repro))
+raster_repro <- projectRaster(raster_xianjiang, crs = crs(td_camps_repro))
 
 # ggR(raster_xianjiang) +
 #   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
@@ -75,31 +79,22 @@ xianjiang_utm <- spTransform(xianjiang, crs(td_camps))
 
 # make interactive map with leaflet
 
-ggR(raster_utm) +
-  geom_polygon(data=xianjiang_utm, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_sf(data=td_camps_sf, aes(fill="red"), col = "red", size = 2)
-
-# test with long lat
-td_camps_longlat <- st_transform(td_camps_sf, crs(raster_xianjiang))
 ggR(raster_xianjiang) +
   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_sf(data=td_camps_longlat, aes(fill="red"), col = "red", size = 2)
-
-
+  geom_point(data=td_camps, aes(x=long, y=lat), col = "red", size = 2)
+compareCRS(raster_xianjiang, td_camps)
 
 ## CAMP DATA
 # https://xjdp.aspi.org.au/data/?tab=datasets#resources;xinjiangs-detention-facilities
 # v1 from 24.09.2020
 campdata <- read_csv("data/CampDataset_v1.csv")
 
-# join with OSM area data
-
 # training data
-td_camps <- readOGR("data/td_camps_.shp")
-td_camps_sf <- st_read("data/td_camps_.shp")
+td_camps<- readOGR("data/td_camps_original.shp")
+# td_camps_sf <- st_read("data/td_camps_original.shp")
 
 
-## SENTINEL 2 DATA
++## SENTINEL 2 DATA
 # from sentinel hub: cloud cover less than 1%
 # dates: march 2017 - before construction started, march 2021 - most recent data
 
@@ -195,12 +190,43 @@ library(zoo)
 # use as.yearmon function as as.Date requires a day
 campdata$`Date of Latest Sat Imagery` <- as.yearmon(campdata$`Date of Latest Sat Imagery`, format ="%y-%B")
 
+# factors - categorical data
+campdata$Tier <- as.factor(campdata$Tier)
+
 
 
 ### EXPLORATORY ANALYSIS ####
+str(campdata)
+glimpse(campdata)
 
-# spatially join non-spatial ASPI campdata with spatial camp polygons
-sp::merge(td_camps, campdata, by.x = )
+# detect relevant features of camps
+# categorical data
+ggplot(data = campdata) +
+  geom_bar(mapping = aes(x = `Tier`, y = count(`Tier`)/ count(nrow(campdata))))
+
+
+# distances
+
+
+
+
+# # spatially join: dataframe ASPI campdata with sf camp polygons
+# # save long lat coordinates as separate columns
+# td_camps$lat <- coordinates(td_camps)[,2] 
+# td_camps$long <- coordinates(td_camps)[,1] 
+# test <- sp::merge(td_camps, campdata, by.x = c("lat","long"), by.y = c("Lat","Long"))
+# test2 <- base::merge(campdata, td_camps, by.y = c("lat","long"), by.x = c("Lat","Long"))
+# 
+# t1 <- cbind(campdata$Lat, campdata$Long)
+# t2 <- cbind(td_camps$lat, td_camps$long)
+# 
+# # fuzzy join as coordinates lie in polygons & don't exactly match
+# library(fuzzyjoin)
+# # Geographic distance based on longitude and latitude 
+# geo_inner_join()
+# 
+# # Numeric values that are within some tolerance 
+# difference_inner_join()
 
 
 
@@ -208,9 +234,9 @@ sp::merge(td_camps, campdata, by.x = )
 plotRGB(sen2017_utm, 3, 2, 1, stretch = "lin")
 plotRGB(sen2021_utm, 3, 2, 1, stretch = "lin")
 
-ggR(sen2017) +
- # geom_polygon(data=xianjiang_utm, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_sf(data=td_aoi, aes(fill="red"), col = "red", size = 2)
+# plot AOI 
+ggRGB(sen2017) +
+  geom_sf(data=td_aoi, aes(alpha = 0.6))
 
 
 
