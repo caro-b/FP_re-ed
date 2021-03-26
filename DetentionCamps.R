@@ -13,6 +13,7 @@ library(tidyverse)
 library(sf)
 
 
+
 #### DATA INPUT ####
 
 # ## OSM
@@ -66,12 +67,6 @@ xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
 # crop raster to extent of vector data
 raster_xianjiang <- crop(raster_10m, xianjiang)
 
-# reproject
-# raster_utm <- projectRaster(raster_xianjiang, crs = crs(td_camps))
-# xianjiang_utm <- spTransform(xianjiang, crs(td_camps))
-td_camps_longlat <- spTransform(td_camps_repro, crs(raster_xianjiang))
-xianjiang_repro <- spTransform(xianjiang, crs(td_camps_repro))
-raster_repro <- projectRaster(raster_xianjiang, crs = crs(td_camps_repro))
 
 # ggR(raster_xianjiang) +
 #   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
@@ -91,7 +86,7 @@ campdata <- read_csv("data/CampDataset_v1.csv")
 
 # training data
 td_camps<- readOGR("data/td_camps_original.shp")
-# td_camps_sf <- st_read("data/td_camps_original.shp")
+td_camps_sf <- st_read("data/td_camps_original.shp")
 
 
 +## SENTINEL 2 DATA
@@ -100,6 +95,7 @@ td_camps<- readOGR("data/td_camps_original.shp")
 
 # import multi-band raster stack as rasterbrick
 sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348_UTM.tif")
+# month june should show cropland/ vegetated areas for land cover distinction
 sen2021 <- brick("data/S2_L2A_2021_03_06_stack_B2348.tif")
 
 ## STRM DEM
@@ -114,6 +110,10 @@ plot(dem)
 # reproject raster data to CRS WGS84 UTM
 sen2017_utm <- projectRaster(sen2017, crs = crs(td_camps))
 sen2021_utm <- projectRaster(sen2021, crs = crs(td_camps))
+
+# td_camps_longlat <- spTransform(td_camps_repro, crs(raster_xianjiang))
+# xianjiang_repro <- spTransform(xianjiang, crs(td_camps_repro))
+# raster_repro <- projectRaster(raster_xianjiang, crs = crs(td_camps_repro))
 
 # quick plotting
 plot(sen2017_utm)
@@ -148,8 +148,15 @@ td_camps$area <- as.numeric(td_camps$area)
 sort(td_camps$area)
 
 # select biggest camp as study area
-td_aoi <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
+td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
+td_aoi_sf <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
 
+# # join with campdata where long lat lies in extent of aoi
+# library(spatialEco)
+# new_shape <- point.in.poly(point.x = campdata$Long, point.y = campdata$Lat, pol.x = extent(td_aoi)[1:2,], pol.y = extent(td_aoi)[2:3,])
+campdata[(campdata$Long >= extent(td_aoi)[1,] & campdata$Long <= extent(td_aoi)[2,]) & 
+           (campdata$Lat >= extent(td_aoi)[3,] & campdata$Lat <= extent(td_aoi)[4,]),]
+# idea: as function, then sapply
 
 ## campdata 
 # show NAs across columns
@@ -165,19 +172,18 @@ campdata_v1 <- campdata
 # delete irrelevant columns: numbering in other dataset (shawn), distance to country centre, distance to pre-school, notes on security/recreational features, visitors, evidence, footage, decomissioning, highlight, desecuritisation
 campdata <- dplyr::select(campdata, -c(7:8, 10, 15:19, 21:27, 37, 41:42))
 
-# explanation of tier variable
-# tier 1: lower security re‑education camps
-# tier 2: dedicated re‑education camps
-# tier 3: detention centres
-# tier 4: maximum security prisons
-# see metadata: https://xjdp.aspi.org.au/resources/#resources;documenting-xinjiangs-detention-system
-
 # check correct types
 str(campdata)
 
 # distances as numeric
 campdata$`Distance to Industrial Park` <- as.numeric(campdata$`Distance to Industrial Park`)
 campdata$`Distance to residential buildings` <- as.numeric(campdata$`Distance to residential buildings`)
+table(campdata$`Distance to Industrial Park`, useNA = "ifany")
+table(campdata$`Distance to residential buildings`, useNA = "ifany")
+# combine distances - distance to built-up area
+# use smallest distance
+campdata$DistanceBuiltup <- pmax(campdata$`Distance to Industrial Park`, campdata$`Distance to residential buildings`, na.rm = T)
+table(campdata$DistanceBuiltup, useNA = "ifany")
 
 # number of buldings as numeric
 campdata$`Number of Buildings in 2017` <- as.numeric(campdata$`Number of Buildings in 2017`)
@@ -193,29 +199,81 @@ campdata$`Date of Latest Sat Imagery` <- as.yearmon(campdata$`Date of Latest Sat
 # factors - categorical data
 campdata$Tier <- as.factor(campdata$Tier)
 
+# usage prior to 2017
+unique(campdata$`Usage prior to 2017`)
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` %in% c("?","N/A")] <- NA
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` == "School?"] <- "School"
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` %in% c("Old prison?","Prison?")] <- "Prison"
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` %in% c("Residential?","Residential buildings","Residential Buildings","Incomplete housing project")] <- "Residential"
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` %in% c("Industrial park","Factory")] <- "Industrial"
+# combine park & barren into one class as 10m resolution probably won't allow distinction
+campdata$`Usage prior to 2017`[campdata$`Usage prior to 2017` %in% c("Park","Barren","This looked like some sort of ruins","Very weird ramp below ground level")] <- "Park/Barren"
+# new column with land cover classes distinguishable in satellite data - built-up, barren (little vegetation) & farmland
+# combine different buildings into class built-up as 10m resolution probably won't allow distinction
+campdata$PriorUsage <- campdata$`Usage prior to 2017` 
+campdata$PriorUsage[campdata$`Usage prior to 2017` %in% c("Four suspicious buildings","Government building","Industrial","Residential","School","Sports facility","Greenhouses","Camp","Prison")] <- "Built-up"
+campdata$PriorUsage[campdata$`Usage prior to 2017` == "Desert"] <- "Park/Barren"
+table(campdata$PriorUsage)
+
 
 
 ### EXPLORATORY ANALYSIS ####
 str(campdata)
 glimpse(campdata)
 
-# detect relevant features of camps
-# categorical data
+## detect relevant features of camps ##
+
+## categorical
+
+# Prior usage (land use)
 ggplot(data = campdata) +
-  geom_bar(mapping = aes(x = `Tier`, y = count(`Tier`)/ count(nrow(campdata))))
+  # sort values by occurence
+  geom_bar(mapping = aes(x = forcats::fct_infreq(`Usage prior to 2017`)))
+
+# Prior usage (land cover)
+ggplot(data = campdata) +
+  # sort values by occurence
+  geom_bar(mapping = aes(x = forcats::fct_infreq(PriorUsage))) # mostly barren land
 
 
-# distances
+## continuous
+
+# (nearest) distance to built-up areas
+ggplot(data = campdata) +
+  geom_histogram(mapping = aes(x = DistanceBuiltup))
+
+ggplot(data = campdata) +
+  geom_density(mapping = aes(x = DistanceBuiltup)) +
+  geom_vline(aes(xintercept = median(campdata$DistanceBuiltup, na.rm = T)), color = "blue", linetype = 4, size = 1) +
+  geom_text(aes(x= median(campdata$DistanceBuiltup, na.rm = T), label= "median", y=0.31), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(campdata$DistanceBuiltup, na.rm = T), label= median(campdata$DistanceBuiltup, na.rm = T), y=0.3), colour="red", text=element_text(size=11))
+
+# quantile
+probs <- c(0.25, 0.5, 0.75, 1)
+quantiles <- quantile(campdata$DistanceBuiltup, prob=probs, na.rm = T)
+campdata$quant <- factor(findInterval(campdata$DistanceBuiltup, quantiles))
+
+
+# area
+ggplot(data = td_camps_sf) +
+  geom_histogram(mapping = aes(x = area)) +
+  geom_vline(aes(xintercept = median(td_camps_sf$area, na.rm = T)), color = "red", linetype = 4, size = 1) +
+  geom_text(aes(x= median(td_camps_sf$area, na.rm = T), label= "median", y=30), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(td_camps_sf$area, na.rm = T), label= median(td_camps_sf$area, na.rm = T), y=28), colour="red", text=element_text(size=11))
+  
+
+# calculate area (double check with QGIS calculation) & google maps
+td_camps$area_sqm <- area(td_camps)
 
 
 
 
 # # spatially join: dataframe ASPI campdata with sf camp polygons
 # # save long lat coordinates as separate columns
-# td_camps$lat <- coordinates(td_camps)[,2] 
-# td_camps$long <- coordinates(td_camps)[,1] 
-# test <- sp::merge(td_camps, campdata, by.x = c("lat","long"), by.y = c("Lat","Long"))
-# test2 <- base::merge(campdata, td_camps, by.y = c("lat","long"), by.x = c("Lat","Long"))
+# td_camps$Lat <- coordinates(td_camps)[,2] 
+# td_camps$Long <- coordinates(td_camps)[,1] 
+# test <- sp::merge(td_camps, campdata, by.x = c("Lat","Long"), by.y = c("Lat","Long"))
+# test2 <- base::merge(campdata, td_camps, by.y = c("Lat","Long"), by.x = c("Lat","Long"))
 # 
 # t1 <- cbind(campdata$Lat, campdata$Long)
 # t2 <- cbind(td_camps$lat, td_camps$long)
@@ -254,7 +312,7 @@ plot(dem_slope)
 
 
 
-#### classification ####
+#### Pixel-based classification ####
 # unsupervised classification
 unsup_2021 <- unsuperClass(sen2021_utm, nClasses = 4)
 plot(unsup_2021$map)
@@ -270,6 +328,9 @@ plot(unsup_2021_stack$map)
 
 # idea: Threshold Based Raster Classification
 # http://neonscience.github.io/neon-data-institute-2016//R/classify-by-threshold-R/
+
+# Supervised classification - RF (most common)
+
 
 
 #### OBIA ####
