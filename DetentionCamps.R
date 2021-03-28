@@ -11,7 +11,7 @@ library(raster)
 library(rgdal)
 library(tidyverse)
 library(sf)
-
+library(sp)
 
 
 #### DATA INPUT ####
@@ -79,6 +79,7 @@ ggR(raster_xianjiang) +
   geom_point(data=td_camps, aes(x=long, y=lat), col = "red", size = 2)
 compareCRS(raster_xianjiang, td_camps)
 
+
 ## CAMP DATA
 # https://xjdp.aspi.org.au/data/?tab=datasets#resources;xinjiangs-detention-facilities
 # v1 from 24.09.2020
@@ -89,14 +90,14 @@ td_camps<- readOGR("data/td_camps_original.shp")
 td_camps_sf <- st_read("data/td_camps_original.shp")
 
 
-+## SENTINEL 2 DATA
+## SENTINEL 2 DATA
 # from sentinel hub: cloud cover less than 1%
 # dates: march 2017 - before construction started, march 2021 - most recent data
 
 # import multi-band raster stack as rasterbrick
-sen2017 <- brick("data/S2_L2A_2017_03_02_stack_B2348_UTM.tif")
-# month june should show cropland/ vegetated areas for land cover distinction
-sen2021 <- brick("data/S2_L2A_2021_03_06_stack_B2348.tif")
+sen2017 <- brick("data/S2_L2A_2017_06_10_stack_B2348.tif")
+# rather take summer month to show cropland/ vegetated areas for land cover distinction ??
+sen2020 <- brick("data/S2_L2A_2020_06_22_stack_B2348.tif")
 
 ## STRM DEM
 # import rasterlayer
@@ -106,57 +107,23 @@ plot(dem)
 
 
 
-#### REPROJECTION ####
-# reproject raster data to CRS WGS84 UTM
-sen2017_utm <- projectRaster(sen2017, crs = crs(td_camps))
-sen2021_utm <- projectRaster(sen2021, crs = crs(td_camps))
-
-# td_camps_longlat <- spTransform(td_camps_repro, crs(raster_xianjiang))
-# xianjiang_repro <- spTransform(xianjiang, crs(td_camps_repro))
-# raster_repro <- projectRaster(raster_xianjiang, crs = crs(td_camps_repro))
-
-# quick plotting
-plot(sen2017_utm)
-plot(sen2021_utm)
-
-# check raster values
-vals <- getValues(sen2021_utm)
-hist(vals)
-
-# reproject dem
-dem_utm <- projectRaster(dem, crs = crs(td_camps))
-
-
-
-#### CROPPING ####
-# crop dem to same extent as raster data
-dem_crop <- crop(dem_utm, extent(sen2021_utm))
-
-# resample dem to 10m spatial resolution of sentinel data
-dem_10m <- resample(dem_crop, sen2021_utm)
-
-plot(dem_10m)
-
-# idea: mask out all high slopes
-
-
-
 #### DATA CLEANING ####
 ## td_camps
 typeof(td_camps$area)
 td_camps$area <- as.numeric(td_camps$area)
 sort(td_camps$area)
 
-# select biggest camp as study area
-td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
-td_aoi_sf <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
+# calculate area (double check with QGIS calculation) & google maps
+td_camps$area_sqm <- area(td_camps)
 
-# # join with campdata where long lat lies in extent of aoi
-# library(spatialEco)
-# new_shape <- point.in.poly(point.x = campdata$Long, point.y = campdata$Lat, pol.x = extent(td_aoi)[1:2,], pol.y = extent(td_aoi)[2:3,])
-campdata[(campdata$Long >= extent(td_aoi)[1,] & campdata$Long <= extent(td_aoi)[2,]) & 
-           (campdata$Lat >= extent(td_aoi)[3,] & campdata$Lat <= extent(td_aoi)[4,]),]
-# idea: as function, then sapply
+str(td_camps@data)
+glimpse(td_camps@data)
+td_camps_v1 <- td_camps
+
+# drop not needed chinese name columns
+drop <- c("name","name_zh.Ha","name_zh._1","alt_name","wikidata","addr_stree")
+td_camps <- td_camps[,!(names(td_camps) %in% drop)]
+
 
 ## campdata 
 # show NAs across columns
@@ -164,6 +131,10 @@ sort(sapply(campdata, function(x) sum(is.na(x))))
 
 # delete columns with all NAs
 campdata <- dplyr::select(campdata, -c(Photos, Videos))
+
+# check for duplicates
+duplicated(campdata)
+duplicated(campdata[c("Name_Code","Lat","Long")])
 
 str(campdata)
 
@@ -218,20 +189,35 @@ table(campdata$PriorUsage)
 
 
 ### EXPLORATORY ANALYSIS ####
-str(campdata)
-glimpse(campdata)
+
+## spatially join campdata & camp td
+# convert campdata into Spatial points df
+nc <- ncol(campdata)
+campdata_sp <- SpatialPointsDataFrame(coords= campdata[c(4,3)], data= campdata[c(1,2,5:nc)], proj4string = crs(td_camps))
+
+# # spatial join - points of campdata located in td polygons
+# camps_join <- over(campdata_sp,td_camps,returnList = TRUE)
+
+# convert to sf
+campdata_sf <- st_as_sf(campdata_sp)
+td_camps_sf <- st_as_sf(td_camps)
+# inner join
+camps_join <- st_join(campdata_sf,td_camps_sf, left = F)
+
+str(camps_join)
+glimpse(camps_join)
 
 ## detect relevant features of camps ##
 
 ## categorical
 
 # Prior usage (land use)
-ggplot(data = campdata) +
+ggplot(data = camps_join) +
   # sort values by occurence
   geom_bar(mapping = aes(x = forcats::fct_infreq(`Usage prior to 2017`)))
 
 # Prior usage (land cover)
-ggplot(data = campdata) +
+ggplot(data = camps_join) +
   # sort values by occurence
   geom_bar(mapping = aes(x = forcats::fct_infreq(PriorUsage))) # mostly barren land
 
@@ -239,67 +225,113 @@ ggplot(data = campdata) +
 ## continuous
 
 # (nearest) distance to built-up areas
-ggplot(data = campdata) +
+ggplot(data = camps_join) +
   geom_histogram(mapping = aes(x = DistanceBuiltup))
 
-ggplot(data = campdata) +
+# add median line
+ggplot(data = camps_join) +
   geom_density(mapping = aes(x = DistanceBuiltup)) +
-  geom_vline(aes(xintercept = median(campdata$DistanceBuiltup, na.rm = T)), color = "blue", linetype = 4, size = 1) +
-  geom_text(aes(x= median(campdata$DistanceBuiltup, na.rm = T), label= "median", y=0.31), colour="red", text=element_text(size=11)) +
-  geom_text(aes(x= median(campdata$DistanceBuiltup, na.rm = T), label= median(campdata$DistanceBuiltup, na.rm = T), y=0.3), colour="red", text=element_text(size=11))
+  geom_vline(aes(xintercept = median(camps_join$DistanceBuiltup, na.rm = T)), color = "blue", linetype = 4, size = 1) +
+  geom_text(aes(x= median(camps_join$DistanceBuiltup, na.rm = T), label= "median", y=0.31), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(camps_join$DistanceBuiltup, na.rm = T), label= median(camps_join$DistanceBuiltup, na.rm = T), y=0.3), colour="red", text=element_text(size=11))
 
-# quantile
-probs <- c(0.25, 0.5, 0.75, 1)
-quantiles <- quantile(campdata$DistanceBuiltup, prob=probs, na.rm = T)
-campdata$quant <- factor(findInterval(campdata$DistanceBuiltup, quantiles))
-
+# # quantile
+# probs <- c(0.25, 0.5, 0.75, 1)
+# quantiles <- quantile(camps_join$DistanceBuiltup, prob=probs, na.rm = T)
+# camps_joina$quant <- factor(findInterval(camps_join$DistanceBuiltup, quantiles))
+# 
 
 # area
-ggplot(data = td_camps_sf) +
+ggplot(data = camps_join) +
   geom_histogram(mapping = aes(x = area)) +
-  geom_vline(aes(xintercept = median(td_camps_sf$area, na.rm = T)), color = "red", linetype = 4, size = 1) +
-  geom_text(aes(x= median(td_camps_sf$area, na.rm = T), label= "median", y=30), colour="red", text=element_text(size=11)) +
-  geom_text(aes(x= median(td_camps_sf$area, na.rm = T), label= median(td_camps_sf$area, na.rm = T), y=28), colour="red", text=element_text(size=11))
+  geom_vline(aes(xintercept = median(camps_join$area, na.rm = T)), color = "red", linetype = 4, size = 1) +
+  geom_text(aes(x= median(camps_join$area, na.rm = T), label= "median", y=30), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(camps_join$area, na.rm = T), label= median(camps_join$area, na.rm = T), y=28), colour="red", text=element_text(size=11))
   
 
-# calculate area (double check with QGIS calculation) & google maps
-td_camps$area_sqm <- area(td_camps)
+## select biggest camp as study area
+td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
+td_aoi_sf <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
 
-
-
-
-# # spatially join: dataframe ASPI campdata with sf camp polygons
-# # save long lat coordinates as separate columns
-# td_camps$Lat <- coordinates(td_camps)[,2] 
-# td_camps$Long <- coordinates(td_camps)[,1] 
-# test <- sp::merge(td_camps, campdata, by.x = c("Lat","Long"), by.y = c("Lat","Long"))
-# test2 <- base::merge(campdata, td_camps, by.y = c("Lat","Long"), by.x = c("Lat","Long"))
+# # join with campdata where long lat lies in extent of aoi
+# campdata[(campdata$Long >= extent(td_aoi)[1,] & campdata$Long <= extent(td_aoi)[2,]) & 
+#            (campdata$Lat >= extent(td_aoi)[3,] & campdata$Lat <= extent(td_aoi)[4,]),]
 # 
-# t1 <- cbind(campdata$Lat, campdata$Long)
-# t2 <- cbind(td_camps$lat, td_camps$long)
+
+
+
+# #### PREPROCESSING ####
+# library(sen2r)
+# # correct Sentinel2 L1C data from 2016
+# sen2cor()
 # 
-# # fuzzy join as coordinates lie in polygons & don't exactly match
-# library(fuzzyjoin)
-# # Geographic distance based on longitude and latitude 
-# geo_inner_join()
+# # download archive data (as scihub archive download isn't working)
+# write_scihub_login('cbEO', 'van0305GB')
+# time_window <- as.Date(c("2016-08-01", "2016-08-04"))
 # 
-# # Numeric values that are within some tolerance 
-# difference_inner_join()
+# s2_data <- s2_list(
+#   spatial_extent = td_aoi_sf,
+#   time_interval = time_window
+#   #tile = "45TXJ",
+#  # orbit = "5836"
+# )
+# 
+# s2_download(
+#   s2_prodlist = s2_data
+# )
+# 
+# s2_order(
+#   s2_prodlist = s2_data
+# )
+
+
+
+#### REPROJECTION ####
+# reproject raster data to CRS WGS84 UTM
+# sen2017_utm <- projectRaster(sen2017, crs = crs(td_camps))
+# sen2020_utm <- projectRaster(sen2020, crs = crs(sen2017))
+
+# reproject td to raster CRS WGS84 UTM 45
+# td_aoi_utm <- spTransform(td_aoi, crs(sen2020_utm))
+# td_aoi_sf_utm <- st_transform(td_aoi_sf, crs(sen2020_utm))
+
+# quick plotting
+plot(sen2017)
+plot(sen2020)
+
+# check raster values
+vals <- getValues(sen2020)
+hist(vals)
+
+# # reproject dem
+# dem_utm <- projectRaster(dem, crs = crs(sen2020))
+
+
+
+#### CROPPING ####
+# crop dem to same extent as raster data
+dem_crop <- crop(dem, extent(sen2020))
+
+# resample dem to 10m spatial resolution of sentinel data
+dem_10m <- resample(dem_crop, sen2020)
+
+plot(dem_10m)
+
 
 
 
 #### PLOTTING ####
-plotRGB(sen2017_utm, 3, 2, 1, stretch = "lin")
-plotRGB(sen2021_utm, 3, 2, 1, stretch = "lin")
+plotRGB(sen2017, 3, 2, 1, stretch = "lin")
+plotRGB(sen2020, 3, 2, 1, stretch = "lin")
 
 # plot AOI 
-ggRGB(sen2017) +
-  geom_sf(data=td_aoi, aes(alpha = 0.6))
+ggRGB(sen2020, stretch = "sqrt") +
+  geom_sf(data=td_aoi_sf, aes(alpha = 0.2), fill = "red")
 
 
 
 #### spectral indices ####
-ndvi_2021 <- spectralIndices(sen2021_utm, red = 3, nir = 4, indices = "NDVI")
+ndvi_2021 <- spectralIndices(sen2020_utm, red = 3, nir = 4, indices = "NDVI")
 plot(ndvi_2021)
 # idea: mask out all high NDVI values
 
@@ -314,10 +346,10 @@ plot(dem_slope)
 
 #### Pixel-based classification ####
 # unsupervised classification
-unsup_2021 <- unsuperClass(sen2021_utm, nClasses = 4)
+unsup_2021 <- unsuperClass(sen2020_utm, nClasses = 4)
 plot(unsup_2021$map)
 
-raster_stack <- stack(sen2021_utm, ndvi_2021, dem_slope, dem_aspect, dem_roughness)
+raster_stack <- stack(sen2020_utm, ndvi_2021, dem_slope, dem_aspect, dem_roughness)
 
 # include additional environmental info into classification
 unsup_2021_stack <- unsuperClass(raster_stack, nClasses = 4)
@@ -338,6 +370,66 @@ plot(unsup_2021_stack$map)
 # divide image into superpixels - group of pixels which are similar in color and other low level properties
 library(OpenImageR)
 # https://www.r-bloggers.com/2020/03/analyzing-remote-sensing-data-using-image-segmentation/
+
+# https://fickse.wordpress.com/2015/06/18/quick-and-dirty-object-based-segmentation-in-r/
+# segment image & use properties of pixel groups (average color, or variablity, or texture) as classification input
+
+
+# simple: threshold of one band
+# green band
+plot(sen2020[[2]])
+plot(sen2020[[2]] < 10000) 
+
+# red band
+plot(sen2020[[3]])
+plot(sen2020[[3]] < 11000)
+
+# dem
+plot(dem_10m)
+plot(dem_10m < 1200)
+
+#### TODO #### account for super high reflectance of metal roof?
+
+# PCA to reduce the data
+#pca <- rasterPCA(sen2020)
+
+i <- sample(1:ncell(sen2020), size = 900000)
+pca <- prcomp(sen2020[i]) 
+px <- predict(sen2020, pca, index = 1:4)
+
+# PC 1, 2 & 3 most interesting
+plot(px)
+
+# # PC 1 & 2 most important
+# plot(pca$map)
+# summary(pca$model)
+
+
+# low pass (low frequency remains) filter on first 2 PCs
+p1 <- focal(px[[1]], w = matrix(1/81, 51,51), pad = TRUE, padValue = 0)
+p2 <- focal(px[[2]], w = matrix(1/81, 51,51), pad = TRUE, padValue = 0)
+p3 <- focal(px[[3]], w = matrix(1/81, 9,9), pad = TRUE, padValue = 0)
+
+plot(p1)
+plot(p2)
+
+xy <- xyFromCell(p1,1:ncell(p1))
+
+# fast clustering algorithm (kmeans) for initial pixel groupings
+k <- kmeans(cbind(p1[i],p2[i]), 100)
+plot(k)
+
+library(FNN) # for assigning each pixel to its K
+K <- knnx.index(k$centers, cbind(p1[],p2[]),1)
+
+pk <- px[[1]] # template for raster
+pk[] <- k$cluster
+# another low-pass filter that preserves edges
+pf <- focal(pk, w = matrix(1,3, 3),fun = median, pad = TRUE, padValue = 0)
+
+plot(pf)
+
+
 
 
 #### clustering ####
