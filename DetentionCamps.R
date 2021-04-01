@@ -86,7 +86,7 @@ compareCRS(raster_xianjiang, td_camps)
 campdata <- read_csv("data/CampDataset_v1.csv")
 
 # training data
-td_camps<- readOGR("data/td_camps_original.shp")
+td_camps <- readOGR("data/td_camps_original.shp")
 td_camps_sf <- st_read("data/td_camps_original.shp")
 
 
@@ -256,33 +256,6 @@ td_aoi_sf <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
 # # join with campdata where long lat lies in extent of aoi
 # campdata[(campdata$Long >= extent(td_aoi)[1,] & campdata$Long <= extent(td_aoi)[2,]) & 
 #            (campdata$Lat >= extent(td_aoi)[3,] & campdata$Lat <= extent(td_aoi)[4,]),]
-# 
-
-
-
-# #### PREPROCESSING ####
-# library(sen2r)
-# # correct Sentinel2 L1C data from 2016
-# sen2cor()
-# 
-# # download archive data (as scihub archive download isn't working)
-# write_scihub_login('cbEO', 'van0305GB')
-# time_window <- as.Date(c("2016-08-01", "2016-08-04"))
-# 
-# s2_data <- s2_list(
-#   spatial_extent = td_aoi_sf,
-#   time_interval = time_window
-#   #tile = "45TXJ",
-#  # orbit = "5836"
-# )
-# 
-# s2_download(
-#   s2_prodlist = s2_data
-# )
-# 
-# s2_order(
-#   s2_prodlist = s2_data
-# )
 
 
 
@@ -319,7 +292,6 @@ plot(dem_10m)
 
 
 
-
 #### PLOTTING ####
 plotRGB(sen2017, 3, 2, 1, stretch = "lin")
 plotRGB(sen2020, 3, 2, 1, stretch = "lin")
@@ -331,9 +303,20 @@ ggRGB(sen2020, stretch = "sqrt") +
 
 
 #### spectral indices ####
-ndvi_2021 <- spectralIndices(sen2020_utm, red = 3, nir = 4, indices = "NDVI")
-plot(ndvi_2021)
+# NDVI
+ndvi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "NDVI")
+plot(ndvi_2020)
+ndvi_2016 <- spectralIndices(sen2017, red = 3, nir = 4, indices = "NDVI")
 # idea: mask out all high NDVI values
+
+# SAVI
+savi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "SAVI")
+plot(savi_2020)
+
+# MSAVI
+msavi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "MSAVI")
+plot(msavi_2020)
+
 
 # calculate terrain features
 dem_slope <- terrain(dem_10m, opt = "slope")
@@ -345,21 +328,64 @@ plot(dem_slope)
 
 
 #### Pixel-based classification ####
-# unsupervised classification
-unsup_2021 <- unsuperClass(sen2020_utm, nClasses = 4)
-plot(unsup_2021$map)
+# compare accuracy of different classifications
+# how different input parameters & masking (water, mountain) improve classification
+# 5 classes - built-up, mountain, soil, grass, & agricultural fields
 
-raster_stack <- stack(sen2020_utm, ndvi_2021, dem_slope, dem_aspect, dem_roughness)
+## unsupervised classification
+# k means
 
-# include additional environmental info into classification
-unsup_2021_stack <- unsuperClass(raster_stack, nClasses = 4)
+# 1. only Sentinel-2 raster
+set.seed(11)
+uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
+plot(uc$map)
 
-par(mfrow = c(2,1))
-plot(unsup_2021$map)
-plot(unsup_2021_stack$map)
+# 2. additional NDVI as input for classification
+# stack data before running classification
+stack_ndvi <- stack(sen2020, ndvi_2020)
+set.seed(22)
+uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 5, nStarts = 50, nSamples = 10000)
+plot(uc_ndvi$map)
+
+# 3. additional DEM features as input for classification
+stack_dem <- stack(sen2020, dem_slope, dem_aspect, dem_roughness)
+set.seed(33)
+uc_dem <- unsuperClass(stack_dem, nClasses = 5, nStarts = 50, nSamples = 10000)
+plot(uc_dem$map)
+
+
+# 4. for multiple features with different scales - normalize data (substract mean & divide by standard deviation)
+uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000, norm = T)
+
+
+# stack classifications & plot for comparison
+class_stack <- stack(uc, uc_ndvi, uc_dem)
+names(class_stack) <- c("only raster","raster + ndvi","raster + dem")
+
+plot(class_stack)
+
+
+
+#### Validation ####
+# check if classification overlays with camp training data
+# validateMap(uc$map, td_aoi, responseCol = , nSamples = 500, mode = "classification", classMapping = NULL)
+
+# crop classification output to aoi
+uc_aoi <- crop(uc$map, extent(td_aoi_sf))
+uc_ndvi_aoi <- crop(uc_ndvi$map, extent(td_aoi_sf))
+uc_dem_aoi <- crop(uc_dem$map, extent(td_aoi_sf))
+
+uc_aoi_stack <- stack(uc_aoi, uc_ndvi_aoi, uc_dem_aoi)
+names(uc_aoi_stack) <- c("UC with Sen2020","UC with Sen2020 + NDVI", "UC with Sen2020 + DEM")
+plot(uc_aoi_stack)
+
+
+# do segmentation in QGIS ?
+# hierarchical clustering
 
 # idea: Threshold Based Raster Classification
 # http://neonscience.github.io/neon-data-institute-2016//R/classify-by-threshold-R/
+
 
 # Supervised classification - RF (most common)
 
@@ -376,59 +402,27 @@ library(OpenImageR)
 
 
 # simple: threshold of one band
+# blue band - best results
+plot(sen2020[[1]])
+plot(sen2020[[1]] >= 10000) 
+
 # green band
 plot(sen2020[[2]])
-plot(sen2020[[2]] < 10000) 
+plot(sen2020[[2]] >= 11000) 
 
 # red band
 plot(sen2020[[3]])
-plot(sen2020[[3]] < 11000)
+plot(sen2020[[3]] >= 14000)
+
+# NIR band
+plot(sen2020[[4]])
+plot(sen2020[[4]] >= 17000)
 
 # dem
 plot(dem_10m)
 plot(dem_10m < 1200)
 
-#### TODO #### account for super high reflectance of metal roof?
-
-# PCA to reduce the data
-#pca <- rasterPCA(sen2020)
-
-i <- sample(1:ncell(sen2020), size = 900000)
-pca <- prcomp(sen2020[i]) 
-px <- predict(sen2020, pca, index = 1:4)
-
-# PC 1, 2 & 3 most interesting
-plot(px)
-
-# # PC 1 & 2 most important
-# plot(pca$map)
-# summary(pca$model)
-
-
-# low pass (low frequency remains) filter on first 2 PCs
-p1 <- focal(px[[1]], w = matrix(1/81, 51,51), pad = TRUE, padValue = 0)
-p2 <- focal(px[[2]], w = matrix(1/81, 51,51), pad = TRUE, padValue = 0)
-p3 <- focal(px[[3]], w = matrix(1/81, 9,9), pad = TRUE, padValue = 0)
-
-plot(p1)
-plot(p2)
-
-xy <- xyFromCell(p1,1:ncell(p1))
-
-# fast clustering algorithm (kmeans) for initial pixel groupings
-k <- kmeans(cbind(p1[i],p2[i]), 100)
-plot(k)
-
-library(FNN) # for assigning each pixel to its K
-K <- knnx.index(k$centers, cbind(p1[],p2[]),1)
-
-pk <- px[[1]] # template for raster
-pk[] <- k$cluster
-# another low-pass filter that preserves edges
-pf <- focal(pk, w = matrix(1,3, 3),fun = median, pad = TRUE, padValue = 0)
-
-plot(pf)
-
+#### TODO #### account for super high reflectance of metal roof? - illumination correction? radcor "illu"
 
 
 
@@ -437,7 +431,29 @@ plot(pf)
 # https://rspatial.org/raster/rs/4-unsupclassification.html
 # https://www.r-exercises.com/2018/02/28/advanced-techniques-with-raster-data-part-1-unsupervised-classification/?__cf_chl_jschl_tk__=e0d64a516348541e9eefb7f45b2fefca5e2a3a45-1616286273-0-Aaf42iAazWGAz8M2krel_3yvK1a0LIG80ZUpKO9Nz9GjUHebcOua39Gj7RCYn7gx3nZbKkYJn2Rr-Wud24X3b3e1aLpF8YvCjmyvy77-iKtIhC2cfxpoKjuugGhLiHKlat61Tlwq3rZVjYsXrQ5KNW6qnDk87aG5slxp3CYB3KzRcHiD_lmx95TalI5AdZh9OEocSWYK6_jI__UwYi_vd7YNEG_4say-21_RRTpSPfrGpzVaKI-97f9HoatzjcW3lL26UOt5cp44ooXL9LJ66xYH8fqapGpzZhC1EJior3hMZQvNJc9kGKU6Kr0AYx8fUQ7K3wO-CO1SqQxvxE2o-2wClL-Lq4jtHH8E5vhrRY4I2w_BkNVrn0otwhloQwa-FB8sGoyiRGMyp1IUFjP0FU47jLGOaFQU8zG76i3G8ZY9O8ev-Gp--3Wv_ws8dmV7nQ
 # http://remote-sensing.org/unsupervised-classification-with-r/
-  
+
+## kmeans clustering
+
+# PCA to reduce the data
+pca <- rasterPCA(sen2020)$map
+
+pca
+# PC 1 & 2 explain 99% of the image variance
+plot(pca)
+
+pca_val <- getValues(pca)
+
+# set seed as kmeans algorithm initiated at random points
+set.seed(99)
+
+# We want to create 3 clusters, allow 500 iterations, start with 5 random sets using "Lloyd" method
+pca_kmns <- kmeans(na.omit(pca_val), centers = 5, iter.max = 500, nstart = 50, algorithm="Lloyd")
+str(pca_kmns)
+
+# Use the raster object to set the cluster values to a new raster
+knr <- setValues(pca$map, pca_kmns$cluster)
+plot(knr)
+
   
 
 #### masking ####
@@ -445,12 +461,40 @@ plot(pf)
 # alternatively via thresholding:
 # http://neonscience.github.io/neon-data-institute-2016//R/mask-raster-threshold-R/
 
+# idea: mask according to height values in dem & mask those pixels in spectral reflectance raster
+plot(dem_10m)
+hist(dem_10m)
 
-#### change detection ####
+# create mask - filter out high areas
+dem_mask <- dem_10m
+dem_mask[dem_mask > 1200] <- NA
+plot(dem_mask)
+
+sen2020_dem_mask <- mask(sen2020, dem_mask)
+plot(sen2020_dem_mask)
 
 
-#### validation ####
-# osm data 
+
+#### Change Detection ####
+
+## CVA
+# on PCA
+cva <- rasterCVA(pca[[1:2]], pca[[3:4]])
+plot(cva)
+
+## Multi-date classification
+
+
+
+#### Landscape Texture ####
+
+## Moving Window
+# 3 x 3 moving window (30 x 30 m)
+window <- matrix(1, nrow = 3, ncol = 3)
+# variance within each window
+sen2020_pca_var <- focal(pca[[1]], w = window, fun = var) 
+plot(pca[[1]])
+plot(sen2020_pca_var)
 
 
 
@@ -470,8 +514,10 @@ con_gif <- list.files(path = "data/gif_images/", pattern = "*.jpg", full.names =
   image_write("construction.gif")
 
 
+
 #### statistics ####
 # idea: first do statistical analysis on data to see most common features of camps
+
 
 
 #### time series ####
