@@ -296,6 +296,10 @@ plot(dem_10m)
 plotRGB(sen2017, 3, 2, 1, stretch = "lin")
 plotRGB(sen2020, 3, 2, 1, stretch = "lin")
 
+# false color
+plotRGB(sen2020, 4, 3, 2, stretch = "lin")
+
+
 # plot AOI 
 ggRGB(sen2020, stretch = "sqrt") +
   geom_sf(data=td_aoi_sf, aes(alpha = 0.2), fill = "red")
@@ -303,7 +307,7 @@ ggRGB(sen2020, stretch = "sqrt") +
 
 
 #### spectral indices ####
-# NDVI
+# NDVI: -1 to 1
 ndvi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "NDVI")
 plot(ndvi_2020)
 ndvi_2016 <- spectralIndices(sen2017, red = 3, nir = 4, indices = "NDVI")
@@ -327,46 +331,114 @@ plot(dem_slope)
 
 
 
-#### Pixel-based classification ####
-# compare accuracy of different classifications
+#### supervised classification ####
+# Random Forest
+sc_td <- readOGR("data/trainingdata.gpkg")
+
+plot(sen2020[[1]])
+plot(sc_td, add = T)
+
+sc <- superClass(sen2020, trainData = sc_td, responseCol = "name")
+plot(sc$map)
+plot(sc_td, add = T)
+
+
+
+
+#### Unsupervised classification / clustering ####
 # how different input parameters & masking (water, mountain) improve classification
-# 5 classes - built-up, mountain, soil, grass, & agricultural fields
+# classification scheme: 3 classes - built-up, soil, grass/agricultural fields (vegetation)
+# in camps only soil & built up
 
-## unsupervised classification
+library(cluster)
+
+# raster to data frame
+raster_df <- as.data.frame(sen2020)
+
+# clustering
+kmeans_out <- kmeans(raster_df, 3, iter.max = 100, nstart = 10)
+
+kmeans_raster <- raster(sen2020)
+kmeans_raster[] <- kmeans_out$cluster
+plot(kmeans_raster)
+
+
+#### TODO: clara ####
+# https://www.r-exercises.com/2018/02/28/advanced-techniques-with-raster-data-part-1-unsupervised-classification/?__cf_chl_jschl_tk__=e0d64a516348541e9eefb7f45b2fefca5e2a3a45-1616286273-0-Aaf42iAazWGAz8M2krel_3yvK1a0LIG80ZUpKO9Nz9GjUHebcOua39Gj7RCYn7gx3nZbKkYJn2Rr-Wud24X3b3e1aLpF8YvCjmyvy77-iKtIhC2cfxpoKjuugGhLiHKlat61Tlwq3rZVjYsXrQ5KNW6qnDk87aG5slxp3CYB3KzRcHiD_lmx95TalI5AdZh9OEocSWYK6_jI__UwYi_vd7YNEG_4say-21_RRTpSPfrGpzVaKI-97f9HoatzjcW3lL26UOt5cp44ooXL9LJ66xYH8fqapGpzZhC1EJior3hMZQvNJc9kGKU6Kr0AYx8fUQ7K3wO-CO1SqQxvxE2o-2wClL-Lq4jtHH8E5vhrRY4I2w_BkNVrn0otwhloQwa-FB8sGoyiRGMyp1IUFjP0FU47jLGOaFQU8zG76i3G8ZY9O8ev-Gp--3Wv_ws8dmV7nQ
+
+# https://rspatial.org/raster/rs/4-unsupclassification.html
+# http://remote-sensing.org/unsupervised-classification-with-r/
+
+
+## kmeans 
+# PCA to reduce the data
+pca <- rasterPCA(sen2020)$map
+
+pca
+plot(pca)
+# PC 1 & 2 explain 99% of the image variance
+
+pca_val <- getValues(pca)
+
+# set seed as kmeans algorithm initiated at random points
+set.seed(99)
+
+# We want to create 3 clusters, allow 500 iterations, start with 5 random sets using "Lloyd" method
+pca_kmns <- kmeans(na.omit(pca_val), centers = 5, iter.max = 500, nstart = 50, algorithm="Lloyd")
+str(pca_kmns)
+
+# Use the raster object to set the cluster values to a new raster
+knr <- setValues(pca$map, pca_kmns$cluster)
+plot(knr)
+
+
 # k means
-
 # 1. only Sentinel-2 raster
 set.seed(11)
-uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
+uc <- unsuperClass(sen2020, nClasses = 3, nStarts = 50, nSamples = 10000)
 plot(uc$map)
 
 # 2. additional NDVI as input for classification
 # stack data before running classification
 stack_ndvi <- stack(sen2020, ndvi_2020)
 set.seed(22)
-uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 5, nStarts = 50, nSamples = 10000)
+uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 3, nStarts = 50, nSamples = 10000)
 plot(uc_ndvi$map)
 
-# 3. additional DEM features as input for classification
-stack_dem <- stack(sen2020, dem_slope, dem_aspect, dem_roughness)
+# 3a.DEM
+stack_dem <- stack(sen2020, dem_10m)
 set.seed(33)
-uc_dem <- unsuperClass(stack_dem, nClasses = 5, nStarts = 50, nSamples = 10000)
+uc_dem <- unsuperClass(stack_dem, nClasses = 3, nStarts = 50, nSamples = 10000)
 plot(uc_dem$map)
 
 
-# 4. for multiple features with different scales - normalize data (substract mean & divide by standard deviation)
-uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000, norm = T)
+# 3b. additional DEM features as input for classification
+stack_dem_feat <- stack(sen2020, dem_slope, dem_aspect, dem_roughness)
+set.seed(44)
+uc_dem_feat <- unsuperClass(stack_dem_feat, nClasses = 3, nStarts = 50, nSamples = 10000)
+plot(uc_dem_feat$map)
+
+
+# 4. texture
+
+
+# for multiple features with different scales - normalize data (substract mean & divide by standard deviation)
+stack_dem_feat <- stack(sen2020, dem_10m)
+set.seed(55)
+uc <- unsuperClass(sen2020, nClasses = 3, nStarts = 50, nSamples = 10000, norm = T)
 
 
 # stack classifications & plot for comparison
-class_stack <- stack(uc, uc_ndvi, uc_dem)
-names(class_stack) <- c("only raster","raster + ndvi","raster + dem")
+class_stack <- stack(uc$map, uc_ndvi$map, uc_dem$map, uc_dem_feat$map)
+names(class_stack) <- c("only raster","raster + ndvi","raster + dem","raster + dem features")
 
 plot(class_stack)
 
+#### TODO idea: aggregate pixels to objects - via majority filter? ####
 
 
 #### Validation ####
+# compare accuracy of different classifications
 # check if classification overlays with camp training data
 # validateMap(uc$map, td_aoi, responseCol = , nSamples = 500, mode = "classification", classMapping = NULL)
 
@@ -374,20 +446,23 @@ plot(class_stack)
 uc_aoi <- crop(uc$map, extent(td_aoi_sf))
 uc_ndvi_aoi <- crop(uc_ndvi$map, extent(td_aoi_sf))
 uc_dem_aoi <- crop(uc_dem$map, extent(td_aoi_sf))
+uc_dem_feat_aoi <- crop(uc_dem_feat$map, extent(td_aoi_sf))
+sc_aoi <- crop(sc$map, extent(td_aoi_sf))
 
-uc_aoi_stack <- stack(uc_aoi, uc_ndvi_aoi, uc_dem_aoi)
-names(uc_aoi_stack) <- c("UC with Sen2020","UC with Sen2020 + NDVI", "UC with Sen2020 + DEM")
+uc_aoi_stack <- stack(uc_aoi, uc_ndvi_aoi, uc_dem_aoi, uc_dem_feat_aoi, sc_aoi)
+names(uc_aoi_stack) <- c("UC Sen2020","UC Sen2020 + NDVI", "UC Sen2020 + DEM", "UC Sen2020 + DEM features", "SC")
 plot(uc_aoi_stack)
 
 
-# do segmentation in QGIS ?
+#### TODO####
 # hierarchical clustering
+# first: classify urban, soil & vegetated areas
+# mask out other classes than urban
+# further classify urban
+
 
 # idea: Threshold Based Raster Classification
 # http://neonscience.github.io/neon-data-institute-2016//R/classify-by-threshold-R/
-
-
-# Supervised classification - RF (most common)
 
 
 
@@ -425,36 +500,34 @@ plot(dem_10m < 1200)
 #### TODO #### account for super high reflectance of metal roof? - illumination correction? radcor "illu"
 
 
+## image segmentation
+# do segmentation in QGIS ?
 
-#### clustering ####
-# kmeans
-# https://rspatial.org/raster/rs/4-unsupclassification.html
-# https://www.r-exercises.com/2018/02/28/advanced-techniques-with-raster-data-part-1-unsupervised-classification/?__cf_chl_jschl_tk__=e0d64a516348541e9eefb7f45b2fefca5e2a3a45-1616286273-0-Aaf42iAazWGAz8M2krel_3yvK1a0LIG80ZUpKO9Nz9GjUHebcOua39Gj7RCYn7gx3nZbKkYJn2Rr-Wud24X3b3e1aLpF8YvCjmyvy77-iKtIhC2cfxpoKjuugGhLiHKlat61Tlwq3rZVjYsXrQ5KNW6qnDk87aG5slxp3CYB3KzRcHiD_lmx95TalI5AdZh9OEocSWYK6_jI__UwYi_vd7YNEG_4say-21_RRTpSPfrGpzVaKI-97f9HoatzjcW3lL26UOt5cp44ooXL9LJ66xYH8fqapGpzZhC1EJior3hMZQvNJc9kGKU6Kr0AYx8fUQ7K3wO-CO1SqQxvxE2o-2wClL-Lq4jtHH8E5vhrRY4I2w_BkNVrn0otwhloQwa-FB8sGoyiRGMyp1IUFjP0FU47jLGOaFQU8zG76i3G8ZY9O8ev-Gp--3Wv_ws8dmV7nQ
-# http://remote-sensing.org/unsupervised-classification-with-r/
+# https://www.r-bloggers.com/2020/03/analyzing-remote-sensing-data-using-image-segmentation/
+# superpixels - group of pixels similar to each other in color & other low level properties
+# simple linear iterative clustering
+library(OpenImageR)
 
-## kmeans clustering
+# use bands , & NIR
+array_sen2020 <- raster::as.array(sen2020)
+region_slic <- superpixels(input_image = array_sen2020, method = "slic", superpixel = 80,
+                          compactness = 30, return_slic_data = TRUE,
+                          return_labels = TRUE, write_slic = "",
+                          verbose = FALSE)
+imageShow(region_slic$slic_data)
+plot(region_slic$slic_data)
 
-# PCA to reduce the data
-pca <- rasterPCA(sen2020)$map
+str(ndvi_2020)
 
-pca
-# PC 1 & 2 explain 99% of the image variance
-plot(pca)
+# convert ndvi data into matrix
+ndvi_mat <- matrix(ndvi_2020@data@values,
+                   nrow = ndvi_2020@nrows,
+                   ncol = ndvi_2020@ncols, byrow = TRUE)
 
-pca_val <- getValues(pca)
 
-# set seed as kmeans algorithm initiated at random points
-set.seed(99)
 
-# We want to create 3 clusters, allow 500 iterations, start with 5 random sets using "Lloyd" method
-pca_kmns <- kmeans(na.omit(pca_val), centers = 5, iter.max = 500, nstart = 50, algorithm="Lloyd")
-str(pca_kmns)
 
-# Use the raster object to set the cluster values to a new raster
-knr <- setValues(pca$map, pca_kmns$cluster)
-plot(knr)
 
-  
 
 #### masking ####
 # idea: flag image with probability that pixel belongs to a camp, according to certain variables: slope, ndvi, high change between 2016 and 2018
