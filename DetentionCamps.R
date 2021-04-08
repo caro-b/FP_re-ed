@@ -95,14 +95,18 @@ td_camps_sf <- st_read("data/td_camps_original.shp")
 # dates: march 2017 - before construction started, march 2021 - most recent data
 
 # import multi-band raster stack as rasterbrick
-sen2017 <- brick("data/S2_L2A_2017_06_10_stack_allbands.tif")
+files17 <- list.files("data/Sen2_2017_06_10", full.names = T, ignore.case = T, pattern = "tiff")
+sen2017_stack <- stack(files17)
+sen2017 <- brick(sen2017_stack)
 
 # rather take summer month to show cropland/ vegetated areas for land cover distinction ??
-sen2020 <- brick("data/S2_L2A_2020_06_02_stack_allbands.tif")
+files20 <- list.files("data/Sen2_2020_06_02", full.names = T, ignore.case = T, pattern = "tiff")
+sen2020_stack <- stack(files20)
+sen2020 <- brick(sen2020_stack)
 
 # rename bands - only bands with spatial resolution of 10m or 20m
-names(sen2017) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B8a","B9","B11","B12")
-names(sen2020) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B8a","B9","B11","B12")
+names(sen2017) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B9","B11","B12")
+names(sen2020) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B9","B11","B12")
 
 
 ## STRM DEM
@@ -281,22 +285,25 @@ hist(vals)
 
 
 #### CROPPING ####
+sen2017_old <- sen2017
+e17 <- drawExtent(show = T, col = "red")
+sen2017 <- crop(sen2017, e17)
+writeRaster(sen2017, "data/sen2017_06_02_cropped.tiff")
+
+sen2020_old <- sen2020
+sen2020 <- crop(sen2020, extent(sen2017))
+
 # crop dem to same extent as raster data
 dem_crop <- crop(dem, extent(sen2020))
 
 # resample dem to 10m spatial resolution of sentinel data
 dem_10m <- resample(dem_crop, sen2020)
 
-plot(dem_10m)
-
-sen2020 <- crop(sen2020, extent(dem_crop))
-sen2017 <- crop(sen2017, extent(dem_crop))
-
 
 
 #### PLOTTING ####
-plotRGB(sen2017, 3, 2, 1, stretch = "lin")
-plotRGB(sen2020, 3, 2, 1, stretch = "lin")
+plotRGB(sen2017, 4, 3, 2, stretch = "lin")
+plotRGB(sen2020, 4, 3, 2, stretch = "lin")
 
 # false color
 plotRGB(sen2020, 4, 3, 2, stretch = "lin")
@@ -310,22 +317,27 @@ ggRGB(sen2020, stretch = "sqrt") +
 
 #### spectral indices ####
 # NDVI: -1 to 1
-ndvi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "NDVI")
+ndvi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "NDVI")
 plot(ndvi_2020)
-ndvi_2016 <- spectralIndices(sen2017, red = 3, nir = 4, indices = "NDVI")
+ndvi_2017 <- spectralIndices(sen2017, red = 4, nir = 5, indices = "NDVI")
 # idea: mask out all high NDVI values
 
 # SAVI
-savi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "SAVI")
+savi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "SAVI")
 plot(savi_2020)
 
 # MSAVI
-msavi_2020 <- spectralIndices(sen2020, red = 3, nir = 4, indices = "MSAVI")
+msavi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "MSAVI")
 plot(msavi_2020)
 
 ## urban indices
 # NDBI (Normalized Difference Built-Up Index): SWIR(Band11)-NIR(Band8)/ SWIR(Band11)+NIR(Band8)
-ndbi <- (sen2020$B12 - sen2020$B8) / (sen2020$B12 + sen2020$B8)
+ndbi_17 <- (sen2017$B11 - sen2017$B8) / (sen2017$B11 + sen2017$B8)
+ndbi_20 <- (sen2020$B11 - sen2020$B8) / (sen2020$B11 + sen2020$B8)
+
+ndbi_diff <- ndbi_20 - ndbi_17
+plot(ndbi_diff)
+
 
 
 # calculate terrain features
@@ -362,35 +374,35 @@ plot(sc_td, add = T)
 # https://rspatial.org/raster/rs/4-unsupclassification.html
 # http://remote-sensing.org/unsupervised-classification-with-r/
 
-## k means
+## k means (1)
 # 2017
 set.seed(1)
-uc_17 <- unsuperClass(sen2017_stretch, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc_17 <- unsuperClass(sen2017, nClasses = 5, nStarts = 50, nSamples = 10000)
 plot(uc_17$map)
 
 # 2020
 set.seed(2)
-uc_20 <- unsuperClass(sen2020_stretch, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc_20 <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
 plot(uc_20$map)
 
 
 ## k means (2)
 # 1. only Sentinel-2 raster
 set.seed(11)
-uc <- unsuperClass(sen2020, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
 plot(uc$map)
 
 # 2. additional NDVI as input for classification
 # stack data before running classification
 stack_ndvi <- stack(sen2020, ndvi_2020)
 set.seed(22)
-uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 5, nStarts = 50, nSamples = 10000)
 plot(uc_ndvi$map)
 
 # 3a.DEM
 stack_dem <- stack(sen2020, dem_10m)
 set.seed(33)
-uc_dem <- unsuperClass(stack_dem, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc_dem <- unsuperClass(stack_dem, nClasses = 5, nStarts = 50, nSamples = 10000)
 plot(uc_dem$map)
 
 # 3b. additional DEM features as input for classification
@@ -531,25 +543,15 @@ ndvi_mat <- matrix(ndvi_2020@data@values,
 # based on threshold masking for multiple metrics
 # search for areas with low ndvi, low height/slope, high change & high textural variation
 
-## 1. ndvi - filter out vegetated areas and water
-# create mask - filter out high NDVI values (vegetation) & low NDVI values (water)
-ndvi_mask <- ndvi_2020
-ndvi_mask[((ndvi_mask > 0.5) )] <- NA # vegetated areas
-ndvi_mask[(ndvi_mask < -0.1)] <- NA # water
-plot(ndvi_mask)
-
-# filter raster data according to NDVI mask
-sen2020_ndvi_mask <- mask(sen2020, ndvi_mask)
-plot(sen2020_ndvi_mask)
-
-
-## 2. dem - height values
+## 1. dem - height values
 # create mask - filter out high height values via DEM
 plot(dem_10m)
 hist(dem_10m)
-
 dem_mask <- dem_10m
-dem_mask[dem_mask > 1170] <- NA
+
+# mask according to 0.9 quantile
+demq <- raster::quantile(dem_10m, probs = 0.85)
+dem_mask[dem_mask > demq] <- NA
 plot(dem_mask)
 
 # filter raster data according to DEM mask
@@ -557,58 +559,94 @@ sen2020_dem_mask <- mask(sen2020, dem_mask)
 plot(sen2020_dem_mask)
 
 
+## 2. ndvi - filter out vegetated areas and water
+# create mask - filter out high NDVI values (vegetation) & low NDVI values (water)
+ndvi_mask <- ndvi_2020
+hist(ndvi_mask)
+
+# mask according to 0.9 quantile
+ndviq <- raster::quantile(ndvi_2020, probs = 0.9)
+
+ndvi_mask[((ndvi_mask > 0) )] <- NA # vegetated areas
+#ndvi_mask[(ndvi_mask < -0.1)] <- NA # water
+plot(ndvi_mask)
+
+# aggregate by a factor of 3, with "modal" (to reduce speckle effect)
+m <- raster::aggregate(ndvi_mask, fact = 9, fun = modal, na.rm = TRUE, expand = F)
+plot(m)
+# resample to get same extent as original raster
+# belinear performs better than nearest neighbor
+re <- resample(m, sen2020, method = "bilinear")
+
+# filter raster data according to NDVI mask
+sen2020_ndvi_mask <- mask(sen2020, re)
+plot(sen2020_ndvi_mask)
+
+
 ## 3. CVA - filter out areas with little change between 2017 and 2020
 # different values ranges of DN values for 2017 & 2020 image - stretch images to value range of 0-255 (8 bit)
 # sen2017_stretch <- stretch(sen2017, minv=0, maxv=255, minq=0, maxq=1)
 # sen2020_stretch <- stretch(sen2020, minv=0, maxv=255, minq=0, maxq=1)
 
-# as difference between band 1 (blue) and 4 (NIR) highest for urban
-cva <- rasterCVA(sen2017[[c(1,4)]], sen2020[[c(1,4)]])
+# analyze bands with highest difference
+cva <- rasterCVA(sen2017[[c(2,11)]], sen2020[[c(2,11)]])
 plot(cva)
 
 hist(cva$angle)
 hist(cva$magnitude)
 
-# mask areas with high change angle & magnitude, filter out areas with low change
 cva_mask <- cva
-cva_mask[cva_mask$angle < 50] <- NA
-cva_mask[cva_mask$magnitude < 4000] <- NA
+# mask areas with high change angle & magnitude, filter out areas with low change
+# mask according to 0.9 quantile
+cvaq <- raster::quantile(cva$magnitude, probs = 0.9)
+
+cva_mask[cva_mask$angle < cvaq] <- NA
+cva_mask[cva_mask$magnitude < cvaq] <- NA
 plot(cva_mask)
 
-sen2020_cva_mask <- mask(sen2020, cva_mask)
+# aggregate by a factor of 3, with "modal" (to reduce speckle effect)
+c <- raster::aggregate(cva_mask, fact = 9, fun = modal, na.rm = TRUE, expand = F)
+plot(c)
+# resample to get same extent as original raster
+# belinear performs better than nearest neighbor
+ce <- resample(c, sen2020, method = "bilinear")
+
+sen2020_cva_mask <- mask(sen2020, ce$magnitude)
 plot(sen2020_cva_mask)
 
 
 ## 4. texture
-## PCA
+## PCA - reduce data
 pca_20 <- rasterPCA(sen2020)$map
 
-# 3 x 3 moving window (30 x 30 m) (as spatial resolution (=pixel size) of 10m)
-# 90 m2 as minimum building size?
-# or minimum camp size? - 29 * 29
-min(td_camps$area) # 9510 m²
-
-## Focal 
-window <- matrix(1, nrow = 91, ncol = 91)
-# variance within each window
-sen2020_pca_var <- focal(pca_20[[1]], w = window, fun = var)
-plot(pca_20[[1]])
-plot(sen2020_pca_var)
-
+# # 3 x 3 moving window (30 x 30 m) (as spatial resolution (=pixel size) of 10m)
+# # 90 m2 as minimum building size?
+# # or minimum camp size? - 29 * 29
+# min(td_camps$area) # 9510 m²
+# 
+# ## Focal 
+# window <- matrix(1, nrow = 3, ncol = 3)
+# # variance within each window
+# sen2020_pca_var <- focal(pca_20[[1]], w = window, fun = var)
+# plot(pca_20[[1]])
+# plot(sen2020_pca_var)
+# 
 
 ## GLCM metrics
 library(glcm)
-glcm <- glcm(pca_20[[1]], window = c(3,3), statistics = c("mean", "variance", "homogeneity", "contrast",
-                                                       "dissimilarity", "entropy", "second_moment", "correlation"))
-plot(glcm) # metric contrast shows highest variation for camps
+# glcm on PCA 
+glcm <- glcm(sen2020[[1]], window = c(5,5), statistics = c("mean", "variance", "homogeneity", "contrast",
+                                                           "dissimilarity", "entropy", "second_moment", "correlation"))
+plot(glcm) # metric mean shows highest variation for camps
 
 # mask areas with low homogeneity & high contrast
-plot(glcm$glcm_contrast)
-hist(glcm$glcm_contrast)
+plot(glcm$glcm_mean)
+hist(glcm$glcm_mean)
 
+glcm_mask <- glcm$glcm_mean
 # create mask - filter out high areas
-glcm_mask <- glcm$glcm_contrast
-glcm_mask[glcm_mask < 2] <- NA
+glcmq<- raster::quantile(glcm_mask, probs = 0.9)
+glcm_mask[glcm_mask < glcmq] <- NA
 plot(glcm_mask)
 
 sen2020_glcm_mask <- mask(sen2020, glcm_mask)
@@ -616,14 +654,15 @@ plot(sen2020_glcm_mask)
 
 
 ## final classification output
-# 1. NDVI
-sen2020_class <- sen2020_ndvi_mask
+# 1.DEM
+sen2020_class <- sen2020_dem_mask
 
-# 2. DEM
-sen2020_class_dem <- mask(sen2020_class, dem_mask)
+# 2. NDVI
+sen2020_class_ndvi <- mask(sen2020_class, re)
 
 # 3. CVA
-sen2020_class_cva <- mask(sen2020_class_dem, cva_mask)
+sen2020_class_cva <- mask(sen2020_class_ndvi, ce$magnitude)
+# maybe use Change only between 2017 & 2018 (to avoid bigger LCC)
 
 # 4. texture
 sen2020_class_tex <- mask(sen2020_class_cva, glcm_mask)
@@ -631,28 +670,6 @@ sen2020_class_tex <- mask(sen2020_class_cva, glcm_mask)
 # plot classification output
 plot(sen2020_class_tex)
 plotRGB(sen2020_class_tex, 3, 2, 1, stretch = "lin")
-
-
-
-# #### final classification output ####
-# # identify mountainous areas as class 1
-# sen2020_class <- dem_mask
-# sen2020_class[is.na(sen2020_class)] <- 1
-# sen2020_class[sen2020_class != 1] <- NA
-# 
-# ## search for areas with low height/slope, high reflectance, high contrast, high change & low NDVI
-# # slope/height
-# sen2020_class <- sen2020
-# sen2020_class[dem_10m > 1170] <- NA
-
-
-
-#### Change Detection ####
-
-## CVA with masked out mountains
-pca_mount <- rasterPCA(sen2020_dem_mask)$map
-cva_mount <- rasterCVA(pca_mount[[1:2]], pca_mount[[3:4]])
-plot(cva_mount)
 
 
 
@@ -670,11 +687,6 @@ con_gif <- list.files(path = "data/gif_images/", pattern = "*.jpg", full.names =
   image_annotate("Dabancheng, Ürümqi, Xinjiang (China): March 2017 - March 2020", location = "+10+10", size = 20, color = "white") %>%
   image_animate(fps=2) %>% 
   image_write("construction.gif")
-
-
-
-#### statistics ####
-# idea: first do statistical analysis on data to see most common features of camps
 
 
 
