@@ -128,6 +128,70 @@ dem <- raster("data/SRTM_N43E088.tif")
 
 plot(dem)
 
+## nightlights data from GEE - VIIRS
+library(rgee)
+#rgee::ee_install()
+ee_Initialize()
+
+# finding images
+point <- ee$Geometry$Point(88.2924,43.3827)
+start <- ee$Date("2020-06-01")
+finish <- ee$Date("2020-06-30")
+
+filteredCollection <- ee$ImageCollection("NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG")$
+  filterBounds(point)$
+  filterDate(start, finish)$
+  sort("CLOUD_COVER", TRUE)
+
+first <- filteredCollection$first()$select("avg_rad")
+
+# get band names
+bandNames <- first$bandNames()
+ee_help(bandNames)
+cat("Band names: ", paste(bandNames$getInfo(), collapse = " "))
+
+# metadata
+ee_print(first) 
+
+# Define visualization parameters
+vizParams <- list(
+  min = 0,
+  max = 10,
+  bands = "avg_rad"
+)
+
+Map$setCenter(88.2924,43.3827, 3)
+Map$addLayer(first, vizParams, "VIIRS 2020")
+
+# crop to Xianjiang extent
+countries <- ee$FeatureCollection("FAO/GAUL/2015/level10")
+
+ee_china <- ee$Feature(states$filter(
+  ee$Filter$eq("ADM0_NAME", "China")
+)$first())
+
+ee_print(ee_china)
+
+Map$addLayer(
+  eeObject = ee_china,
+  visParams = list(palette = "blue"),
+  name = "China"
+)
+
+extent(xianjiang)
+# geometry
+geometry <- ee$Geometry$Rectangle(
+  coords = c(73.5577, 34.33627, 96.36517, 49.17501),
+  proj = "EPSG:4326",
+  geodesic = FALSE
+)
+
+# ee as raster, crop to extent of xinjiang
+viirs_raster <- ee_as_raster(first, region=geometry) # also downloads raster as tiff
+viirs <- raster("data/20200601.tif")
+# alternively access raster via:
+# viirs_raster$avg_rad
+
 
 
 #### DATA CLEANING ####
@@ -312,6 +376,9 @@ dem_crop <- crop(dem, extent(sen2020))
 # resample dem to 10m spatial resolution of sentinel data
 dem_10m <- resample(dem_crop, sen2020)
 
+# crop to extent of aoi
+viirs_aoi <- crop(viirs, extent(td_aoi)) # resolution too low for aoi, but for bigger areas useful for masking urban areas
+
 
 
 #### PLOTTING ####
@@ -329,6 +396,7 @@ ggRGB(sen2020, stretch = "sqrt") +
 
 
 #### spectral indices ####
+#### TODO - as function ####
 # NDVI: -1 to 1
 ndvi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "NDVI")
 plot(ndvi_2020)
@@ -352,7 +420,9 @@ plot(ndbi_20)
 ndbi_diff <- ndbi_20 - ndbi_17
 plot(ndbi_diff)
 
-
+# NDTI (Normalized Difference Tillage Index): (SWIR 1−SWIR 2) / (SWIR 1+SWIR 2)
+ndti_20 <- (sen2020$B11 - sen2020$B9) / (sen2020$B11 + sen2020$B9)
+plot(ndti_20)
 
 # calculate terrain features
 dem_slope <- terrain(dem_10m, opt = "slope")
@@ -699,7 +769,7 @@ hist(class_vector$area)
 
 areamin <- min(td_camps$area) # 9510 m²
 class_area <- class_vector
-# filter out areas smnaller than minimum camp size
+# filter out areas smaller than minimum camp size
 class_area <- class_area[class_area$area > areamin,]
 plot(class_area)
 
@@ -711,8 +781,8 @@ class_overlap <- subset(class_area, overlap == "TRUE")
 
 
 #### visualization ####
-# idea: animation with raster images on how camp was built
-# jpg images from sentinel hub
+# animation with raster images on how camp was built
+# jpg images from sentinel hub, less than 1% cloud cover
 library(purrr) 
 library(magick)
 
