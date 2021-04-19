@@ -1,63 +1,53 @@
 # Purpose of script:
+# analysis of re-education in camps in the Xinjiang region where the Chinese government is interning the Moslem minorities
+# until now the camp detection is mainly done manually therefore this script offers methods to detect camps in a more automatic way
+# data sources: Natural Earth, OSM, Sentinel2 (ESA), STRM (NASA), VIIRS (NASA)
 # Author: Caroline Busse
 # Date: April, 2021
-# R version and packages:
+# R version: 4.0.5
+
+
+#### PACKAGES ####
+
+# install required packages if needed
+packagelist <- c("dplyr","glcm","ggmap","ggplot2","magick","osmdata","purrr","raster","readr","rgdal","rgee","rnaturalearth","RStoolbox","sf","sp","tidyverse","zoo")
+new.packages <- packagelist[!(packagelist %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
 
 # Load required packages
-library(dplyr)
-library(ggplot2)
-library(RStoolbox)
-library(raster)
-library(rgdal)
-library(tidyverse)
-library(sf)
-library(sp)
+lapply(packagelist, require, character.only = TRUE)
 
 
-#### DATA INPUT ####
 
-# ## OSM
-# # camp locations & their area
-# 
-# 
-# # bounding box for the area of Xinjiang, using polygon shaped output
- bb <- getbb("Xinjiang", format_out = "polygon")
-# 
-# # download camps as features
-# # convert bb to an overpass query object (API)
-# camps_osm <- opq(bb) %>%
-#   add_osm_feature(key = "prison_camp", value = "re-education") %>%
-#   # output as simple flibrary(osmdata)eatures object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
-#   osmdata_sf()
+#### DATA DOWNLOAD ####
 
-# area() for osm
+## OSM - camp data
+# bounding box for the area of Xinjiang, using polygon shaped output
+bb <- getbb("Xinjiang", format_out = "polygon")
 
+# download camp areas for validation
+# convert bb to an overpass query object (API)
+camps_osm <- opq(bb) %>%
+add_osm_feature(key = "prison_camp", value = "re-education") %>%  
+# output as simple features object (or R spatial (sp) - osmdata_sp()) - advantage of sf: use geom_sf() for ggplot2
+osmdata_sp()
 
-# plotting
-library(ggmap)
+# extract polygons to get camp area
+camps_osm_pol <- camps_osm$osm_polygons
+
+# camp area in m²
+camps_osm_pol$area <- area(camps_osm_pol)
 
 # background map
 map <- get_map(getbb("Xinjiang"), source = "osm", color = "color", maptype="satellite")
 
-# naturalearthdata
-library(rnaturalearth)
+
+## Natural Earth 
+# raster data
 raster_10m <- ne_download(scale = 10, type = 'NE1_HR_LC', category = 'raster')
-plot(raster_10m)
-
-ggmap(map) +
- # geom_raster(raster_10m) +
-  geom_sf(data = camps_osm$osm_polygons,
-          # indicates that the aesthetic mappings of the spatial object osm_polygons has to be used
-          inherit.aes = FALSE,
-          colour = "red",
-          fill = "red",
-          alpha = 0.5) +
-  labs(x = "", y = "") +
-  coord_sf(xlim = c(75.00, 100.00), ylim = c(36.00, 48.00))
 
 
-# vector data on top of raster data
-# download vector data of china
+## GADM - vector data of china
 china <- getData("GADM", country = "CHN", level = 1)
 china$NAME_1
 
@@ -67,17 +57,12 @@ xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
 # crop raster to extent of vector data
 raster_xianjiang <- crop(raster_10m, xianjiang)
 
+compareCRS(raster_xianjiang, camps_osm_pol)
 
-# ggR(raster_xianjiang) +
-#   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-#   geom_sf(data=camps_osm$osm_polygons, aes(fill="red"), col = "red", size = 2)
-
-# make interactive map with leaflet
-
+# vector data on top of raster data
 ggR(raster_xianjiang) +
   geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_point(data=td_camps, aes(x=long, y=lat), col = "red", size = 2)
-compareCRS(raster_xianjiang, td_camps)
+  geom_point(data=camps_osm_pol, aes(x=long, y=lat), col = "red", size = 2)
 
 
 ## CAMP DATA
@@ -85,23 +70,13 @@ compareCRS(raster_xianjiang, td_camps)
 # v1 from 24.09.2020
 campdata <- read_csv("data/CampDataset_v1.csv")
 
-# training data
-td_camps <- readOGR("data/td_camps_original.shp")
-td_camps_sf <- st_read("data/td_camps_original.shp")
-
 
 ## SENTINEL 2 DATA
 # from sentinel hub: cloud cover less than 1%
 # dates: june 2017 - before construction started, june 2020 - most construction finished
-
+# summer month to show cropland/ vegetated areas for land cover distinction
 sen2017 <- brick("data/sen2017_06_02_cropped.tif")
 
-# import multi-band raster stack as rasterbrick
-# files17 <- list.files("data/Sen2_2017_06_10", full.names = T, ignore.case = T, pattern = "tiff")
-# sen2017_stack <- stack(files17)
-# sen2017 <- brick(sen2017_stack)
-
-# rather take summer month to show cropland/ vegetated areas for land cover distinction ??
 files20 <- list.files("data/Sen2_2020_06_02", full.names = T, ignore.case = T, pattern = "tiff")
 sen2020_stack <- stack(files20)
 sen2020 <- brick(sen2020_stack)
@@ -110,27 +85,16 @@ sen2020 <- brick(sen2020_stack)
 names(sen2017) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B9","B11","B12")
 names(sen2020) <- c("B1","B2","B3","B4","B5","B6","B7","B8","B9","B11","B12")
 
-# ## Change data
-# fileschange17 <- list.files("data/Change2017", full.names = T, ignore.case = T, pattern = "tiff")
-# change2017_stack <- stack(fileschange17)
-# change2017 <- brick(change2017_stack)
-# 
-# fileschange19 <- list.files("data/Change2019", full.names = T, ignore.case = T, pattern = "tiff")
-# change2019_stack <- stack(fileschange19)
-# change2019 <- brick(change2019_stack)
-# 
-# change2019 <- crop(change2019, extent(change2017))
-# change <- change2019 - change2017
 
-## STRM DEM
-# import rasterlayer
-dem <- raster("data/SRTM_N43E088.tif")
+## STRM DEM (digital elevation model)
+srtm <- getData('SRTM', lon=88, lat=43)
+plot(srtm)
 
-plot(dem)
 
-## nightlights data from GEE - VIIRS
-library(rgee)
-#rgee::ee_install()
+## VIIRS - Nightlights data 
+# to map built-up areas
+# download from Google Earth Engine
+ee_install() # only has to be done the first time
 ee_Initialize()
 
 # finding images
@@ -144,11 +108,6 @@ filteredCollection <- ee$ImageCollection("NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG")$
   sort("CLOUD_COVER", TRUE)
 
 first <- filteredCollection$first()$select("avg_rad")
-
-# get band names
-bandNames <- first$bandNames()
-ee_help(bandNames)
-cat("Band names: ", paste(bandNames$getInfo(), collapse = " "))
 
 # metadata
 ee_print(first) 
@@ -164,20 +123,6 @@ Map$setCenter(88.2924,43.3827, 3)
 Map$addLayer(first, vizParams, "VIIRS 2020")
 
 # crop to Xianjiang extent
-countries <- ee$FeatureCollection("FAO/GAUL/2015/level10")
-
-ee_china <- ee$Feature(states$filter(
-  ee$Filter$eq("ADM0_NAME", "China")
-)$first())
-
-ee_print(ee_china)
-
-Map$addLayer(
-  eeObject = ee_china,
-  visParams = list(palette = "blue"),
-  name = "China"
-)
-
 extent(xianjiang)
 # geometry
 geometry <- ee$Geometry$Rectangle(
@@ -188,28 +133,24 @@ geometry <- ee$Geometry$Rectangle(
 
 # ee as raster, crop to extent of xinjiang
 viirs_raster <- ee_as_raster(first, region=geometry) # also downloads raster as tiff
-viirs <- raster("data/20200601.tif")
-# alternively access raster via:
-# viirs_raster$avg_rad
 
 
 
 #### DATA CLEANING ####
-## td_camps
-typeof(td_camps$area)
-td_camps$area <- as.numeric(td_camps$area)
-sort(td_camps$area)
+## osm camp data
+typeof(camps_osm_pol$area)
+# round
+camps_osm_pol$area <- floor(camps_osm_pol$area)
 
-# calculate area (double check with QGIS calculation) & google maps
-td_camps$area_sqm <- area(td_camps)
+sort(camps_osm_pol$area)
 
-str(td_camps@data)
-glimpse(td_camps@data)
-td_camps_v1 <- td_camps
+str(camps_osm_pol@data)
+glimpse(camps_osm_pol@data)
+camps_osm_pol_v1 <- camps_osm_pol
 
-# drop not needed chinese name columns
-drop <- c("name","name_zh.Ha","name_zh._1","alt_name","wikidata","addr_stree")
-td_camps <- td_camps[,!(names(td_camps) %in% drop)]
+# drop not needed columns e.g. chinese name
+drop <- c("name","addr:street","alt_name","name:zh-Hans","name:zh-Hant","note","ref","note","ref:aspi","ref:etnam","ref:shawn","wikidata")
+osm_camps <- camps_osm_pol[,!(names(camps_osm_pol) %in% drop)]
 
 
 ## campdata 
@@ -250,7 +191,6 @@ campdata$`Number of Buildings in 2019` <- as.numeric(campdata$`Number of Buildin
 campdata$`Number of Buildings in 2020` <- as.numeric(campdata$`Number of Buildings in 2020`)
 
 # date
-library(zoo)
 # use as.yearmon function as as.Date requires a day
 campdata$`Date of Latest Sat Imagery` <- as.yearmon(campdata$`Date of Latest Sat Imagery`, format ="%y-%B")
 
@@ -278,26 +218,24 @@ table(campdata$PriorUsage)
 ### EXPLORATORY ANALYSIS ####
 
 ## spatially join campdata & camp td
-# convert campdata into Spatial points df
+# convert campdata into Spatial points data frame
 nc <- ncol(campdata)
-campdata_sp <- SpatialPointsDataFrame(coords= campdata[c(4,3)], data= campdata[c(1,2,5:nc)], proj4string = crs(td_camps))
-
-# # spatial join - points of campdata located in td polygons
-# camps_join <- over(campdata_sp,td_camps,returnList = TRUE)
+campdata_sp <- SpatialPointsDataFrame(coords= campdata[c(4,3)], data= campdata[c(1,2,5:nc)], proj4string = crs(osm_camps))
 
 # convert to sf
 campdata_sf <- st_as_sf(campdata_sp)
-td_camps_sf <- st_as_sf(td_camps)
+osm_camps_sf <- st_as_sf(osm_camps)
+
 # inner join
-camps_join <- st_join(campdata_sf,td_camps_sf, left = F)
+camps_join <- st_join(campdata_sf,osm_camps_sf, left = F)
 
 str(camps_join)
 glimpse(camps_join)
 
+
 ## detect relevant features of camps ##
 
-## categorical
-
+# 1. categorical
 # Prior usage (land use)
 ggplot(data = camps_join) +
   # sort values by occurence
@@ -308,9 +246,7 @@ ggplot(data = camps_join) +
   # sort values by occurence
   geom_bar(mapping = aes(x = forcats::fct_infreq(PriorUsage))) # mostly barren land
 
-
-## continuous
-
+# 2. continuous
 # (nearest) distance to built-up areas
 ggplot(data = camps_join) +
   geom_histogram(mapping = aes(x = DistanceBuiltup))
@@ -318,66 +254,54 @@ ggplot(data = camps_join) +
 # add median line
 ggplot(data = camps_join) +
   geom_density(mapping = aes(x = DistanceBuiltup)) +
-  geom_vline(aes(xintercept = median(camps_join$DistanceBuiltup, na.rm = T)), color = "blue", linetype = 4, size = 1) +
-  geom_text(aes(x= median(camps_join$DistanceBuiltup, na.rm = T), label= "median", y=0.31), colour="red", text=element_text(size=11)) +
-  geom_text(aes(x= median(camps_join$DistanceBuiltup, na.rm = T), label= median(camps_join$DistanceBuiltup, na.rm = T), y=0.3), colour="red", text=element_text(size=11))
-
-# # quantile
-# probs <- c(0.25, 0.5, 0.75, 1)
-# quantiles <- quantile(camps_join$DistanceBuiltup, prob=probs, na.rm = T)
-# camps_joina$quant <- factor(findInterval(camps_join$DistanceBuiltup, quantiles))
-# 
+  geom_vline(aes(xintercept = median(DistanceBuiltup, na.rm = T)), color = "blue", linetype = 4, size = 1) +
+  geom_text(aes(x= median(DistanceBuiltup, na.rm = T), label= "median", y=0.31), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(DistanceBuiltup, na.rm = T), label= median(DistanceBuiltup, na.rm = T), y=0.3), colour="red", text=element_text(size=11))
 
 # area
 ggplot(data = camps_join) +
   geom_histogram(mapping = aes(x = area)) +
-  geom_vline(aes(xintercept = median(camps_join$area, na.rm = T)), color = "red", linetype = 4, size = 1) +
-  geom_text(aes(x= median(camps_join$area, na.rm = T), label= "median", y=30), colour="red", text=element_text(size=11)) +
-  geom_text(aes(x= median(camps_join$area, na.rm = T), label= median(camps_join$area, na.rm = T), y=28), colour="red", text=element_text(size=11))
+  geom_vline(aes(xintercept = median(area, na.rm = T)), color = "red", linetype = 4, size = 1) +
+  geom_text(aes(x= median(area, na.rm = T), label= "median", y=30), colour="red", text=element_text(size=11)) +
+  geom_text(aes(x= median(area, na.rm = T), label= median(area, na.rm = T), y=28), colour="red", text=element_text(size=11))
   
-
-## select biggest camp as study area
-td_aoi <- td_camps[td_camps$area == max(td_camps$area),]
-td_aoi_sf <- td_camps_sf[td_camps_sf$area == max(td_camps_sf$area),]
-
-# # join with campdata where long lat lies in extent of aoi
-# campdata[(campdata$Long >= extent(td_aoi)[1,] & campdata$Long <= extent(td_aoi)[2,]) & 
-#            (campdata$Lat >= extent(td_aoi)[3,] & campdata$Lat <= extent(td_aoi)[4,]),]
-
 
 
 #### REPROJECTION ####
+# check projection
+crs(sen2020)
+crs(sen2020)
+crs(srtm_crop)
+crs(viirs_raster)
+crs(osm_camps)
 
-# quick plotting
-plot(sen2017)
-plot(sen2020)
+# reproject crs
+crs(osm_camps) <- crs(sen2020)
 
-# check raster values
-vals <- getValues(sen2020)
-hist(vals)
 
-# reproject dem
-# dem_utm <- projectRaster(dem, crs = crs(sen2020))
+## select biggest camp as study area
+osm_aoi <- osm_camps[osm_camps$area == max(osm_camps$area),]
+osm_aoi_sf <- osm_camps_sf[osm_camps_sf$area == max(osm_camps_sf$area),]
 
 
 
 #### CROPPING ####
-# sen2017_old <- sen2017
-# e17 <- drawExtent(show = T, col = "red")
-# sen2017 <- crop(sen2017, e17)
-# writeRaster(sen2017, "data/sen2017_06_02_cropped.tiff")
-
-sen2020_old <- sen2020
 sen2020 <- crop(sen2020, extent(sen2017))
 
 # crop dem to same extent as raster data
-dem_crop <- crop(dem, extent(sen2020))
+srtm_crop <- crop(srtm, extent(sen2020))
+plot(srtm_crop)
 
-# resample dem to 10m spatial resolution of sentinel data
-dem_10m <- resample(dem_crop, sen2020)
+# resample srtm to 10m spatial resolution of sentinel data
+srtm_10m <- resample(srtm_crop, sen2020)
 
-# crop to extent of aoi
-viirs_aoi <- crop(viirs, extent(td_aoi)) # resolution too low for aoi, but for bigger areas useful for masking urban areas
+# crop to extent of raster data
+viirs <- crop(viirs_raster, extent(sen2020))
+plot(viirs)
+
+# resample srtm to 10m spatial resolution of sentinel data
+viirs_10m <- resample(viirs, sen2020)
+plot(viirs_10m)
 
 
 
@@ -385,251 +309,184 @@ viirs_aoi <- crop(viirs, extent(td_aoi)) # resolution too low for aoi, but for b
 plotRGB(sen2017, 4, 3, 2, stretch = "lin")
 plotRGB(sen2020, 4, 3, 2, stretch = "lin")
 
-# false color
-plotRGB(sen2020, 4, 3, 2, stretch = "lin")
-
-
 # plot AOI 
-ggRGB(sen2020, stretch = "sqrt") +
-  geom_sf(data=td_aoi_sf, aes(alpha = 0.2), fill = "red")
+ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
+  geom_sf(data= osm_aoi_sf, aes(alpha = 0.2), fill = "red")
+
+
+## animation with raster images on how camp was built
+# jpg images from sentinel hub, less than 1% cloud cover
+# make gif to visualize construction of camp
+con_gif <- list.files(path = "data/gif_images/", pattern = "*.jpg", full.names = T) %>% 
+  map(image_read) %>% 
+  image_join() %>% 
+  #image_crop("500x500") %>%
+  image_annotate("Dabancheng, Ürümqi, Xinjiang (China): March 2017 - March 2020", location = "+10+10", size = 20, color = "white") %>%
+  image_animate(fps=2) %>% 
+  image_write("construction.gif")
 
 
 
-#### spectral indices ####
-#### TODO - as function ####
-# NDVI: -1 to 1
+#### SPECTRAL INDICES ####
+## Vegetation Indices
+# 1. NDVI (Normalized Difference Vegetation Index): range frome -1 to 1
 ndvi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "NDVI")
 plot(ndvi_2020)
 ndvi_2017 <- spectralIndices(sen2017, red = 4, nir = 5, indices = "NDVI")
-# idea: mask out all high NDVI values
+plot(ndvi_2017)
 
-# SAVI
+# 2. SAVI (Soil Adjusted Vegetation Index)
+# account for soil background in desert area of Xinjiang
 savi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "SAVI")
 plot(savi_2020)
+savi_2017 <- spectralIndices(sen2017, red = 4, nir = 5, indices = "SAVI")
+plot(savi_2017)
 
-# MSAVI
+# 3. MSAVI (Modified Soil Adjusted Vegetation Index))
 msavi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "MSAVI")
-plot(msavi_2020)
+plot(msavi_2020) # doesn't return better result as camp area detected as slightly vegetated
 
-## urban indices
-# NDBI (Normalized Difference Built-Up Index): SWIR(Band11)-NIR(Band8)/ SWIR(Band11)+NIR(Band8)
+
+## Urban Indices
+# 1. NDBI (Normalized Difference Built-Up Index): SWIR(Band11)-NIR(Band8) / SWIR(Band11)+NIR(Band8)
 ndbi_17 <- (sen2017$B11 - sen2017$B8) / (sen2017$B11 + sen2017$B8)
 ndbi_20 <- (sen2020$B11 - sen2020$B8) / (sen2020$B11 + sen2020$B8)
 plot(ndbi_20)
+plot(ndbi_17)
 
-ndbi_diff <- ndbi_20 - ndbi_17
-plot(ndbi_diff)
-
-# NDTI (Normalized Difference Tillage Index): (SWIR 1−SWIR 2) / (SWIR 1+SWIR 2)
+# 2. NDTI (Normalized Difference Tillage Index): (SWIR1−SWIR2) / (SWIR1+SWIR2)
 ndti_20 <- (sen2020$B11 - sen2020$B9) / (sen2020$B11 + sen2020$B9)
 plot(ndti_20)
-
-# calculate terrain features
-dem_slope <- terrain(dem_10m, opt = "slope")
-dem_aspect <- terrain(dem_10m, opt = "aspect")
-dem_roughness <- terrain(dem_10m, opt = "roughness")
-
-plot(dem_slope)
+# urban indices fail to clearly identify built-up areas, mountainous areas mixed up
 
 
+## Terrain Features
+srtm_slope <- terrain(srtm_10m, opt = "slope")
+srtm_aspect <- terrain(srtm_10m, opt = "aspect")
+srtm_roughness <- terrain(srtm_10m, opt = "roughness")
 
-#### supervised classification ####
+plot(srtm_slope)
+
+
+## Texture metrics
+# PCA (Principal Component Analysis) - reduce dimensionality in data
+pca_20 <- rasterPCA(sen2020)$map
+plot(pca_20) 
+
+# GLCM (grey-level co-occurrence matrices)
+glcm_pca <- glcm(pca_20[[1]], window = c(5,5), shift = c(1, 1),
+             statistics = c("mean", "variance", "homogeneity", "contrast",
+                            "dissimilarity", "entropy", "second_moment", "correlation"))
+plot(glcm_pca) 
+
+
+
+#### CLASSIFICATION ####
+# classification scheme: 4 classes - urban (built-up), soil, grass/agricultural fields (vegetation), water
+# in camps only soil & urban
+
+## Supervised classification
 # Random Forest
 sc_td <- readOGR("data/trainingdata.gpkg")
+sc_td_crop <- crop(sc_td, extent(sen2020))
 
 plot(sen2020[[1]])
-plot(sc_td, add = T)
+plot(sc_td_crop, add = T)
 
-sc <- superClass(sen2020, trainData = sc_td, responseCol = "name")
-plot(sc$map)
-plot(sc_td, add = T)
-
+sc_20 <- superClass(sen2020, trainData = sc_td_crop, responseCol = "name")
+plot(sc_20$map)
 
 
+## Unsupervised classification / clustering
+# k-means
+# how different input parameters & prior masking (water, mountain) improve classification
 
-#### Unsupervised classification / clustering ####
-# how different input parameters & masking (water, mountain) improve classification
-# classification scheme: 3 classes - built-up, soil, grass/agricultural fields (vegetation)
-# in camps only soil & built up
-
-#### TODO: clara ####
-# https://www.r-exercises.com/2018/02/28/advanced-techniques-with-raster-data-part-1-unsupervised-classification/?__cf_chl_jschl_tk__=e0d64a516348541e9eefb7f45b2fefca5e2a3a45-1616286273-0-Aaf42iAazWGAz8M2krel_3yvK1a0LIG80ZUpKO9Nz9GjUHebcOua39Gj7RCYn7gx3nZbKkYJn2Rr-Wud24X3b3e1aLpF8YvCjmyvy77-iKtIhC2cfxpoKjuugGhLiHKlat61Tlwq3rZVjYsXrQ5KNW6qnDk87aG5slxp3CYB3KzRcHiD_lmx95TalI5AdZh9OEocSWYK6_jI__UwYi_vd7YNEG_4say-21_RRTpSPfrGpzVaKI-97f9HoatzjcW3lL26UOt5cp44ooXL9LJ66xYH8fqapGpzZhC1EJior3hMZQvNJc9kGKU6Kr0AYx8fUQ7K3wO-CO1SqQxvxE2o-2wClL-Lq4jtHH8E5vhrRY4I2w_BkNVrn0otwhloQwa-FB8sGoyiRGMyp1IUFjP0FU47jLGOaFQU8zG76i3G8ZY9O8ev-Gp--3Wv_ws8dmV7nQ
-
-# https://rspatial.org/raster/rs/4-unsupclassification.html
-# http://remote-sensing.org/unsupervised-classification-with-r/
-
-## k means (1)
-# 2017
-set.seed(1)
-uc_17 <- unsuperClass(sen2017, nClasses = 5, nStarts = 50, nSamples = 10000)
-plot(uc_17$map)
-
-# 2020
-set.seed(1)
-uc_20 <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
-plot(uc_20$map)
-
-
-## k means (2)
 # 1. only Sentinel-2 raster
 set.seed(11)
-uc <- unsuperClass(sen2020, nClasses = 5, nStarts = 50, nSamples = 10000)
-plot(uc$map)
+uc <- unsuperClass(sen2020, nClasses = 4, nStarts = 50, nSamples = 10000)
+plot(uc$map, main = 'Unsupervised Classification 2020')
 
 # 2. additional NDVI as input for classification
 # stack data before running classification
 stack_ndvi <- stack(sen2020, ndvi_2020)
 set.seed(22)
-uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 5, nStarts = 50, nSamples = 10000)
+# for multiple features with different scales - normalize data (substract mean & divide by standard deviation)
+uc_ndvi <- unsuperClass(stack_ndvi, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
 plot(uc_ndvi$map)
 
 # 3a.DEM
-stack_dem <- stack(sen2020, dem_10m)
+stack_dem <- stack(sen2020, srtm_10m)
 set.seed(33)
-uc_dem <- unsuperClass(stack_dem, nClasses = 5, nStarts = 50, nSamples = 10000)
+uc_dem <- unsuperClass(stack_dem, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
 plot(uc_dem$map)
 
 # 3b. additional DEM features as input for classification
-stack_dem_feat <- stack(sen2020, dem_slope, dem_aspect, dem_roughness)
+stack_dem_feat <- stack(sen2020, srtm_slope, srtm_aspect, srtm_roughness)
 set.seed(44)
-uc_dem_feat <- unsuperClass(stack_dem_feat, nClasses = 3, nStarts = 50, nSamples = 10000)
+uc_dem_feat <- unsuperClass(stack_dem_feat, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
 plot(uc_dem_feat$map)
 
 # 4. textural metrics as input
-stack_glcm <- stack(sen2020, glcm$glcm_contrast)
+stack_glcm <- stack(sen2020, glcm$glcm_variance)
 set.seed(55)
-uc_glcm <- unsuperClass(glcm$glcm_contrast, nClasses = 3, nStarts = 50, nSamples = 10000, norm = T)
+uc_glcm <- unsuperClass(glcm$glcm_variance, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
 plot(uc_glcm$map)
 
+# 5. combination of all features
+stack_dem_feat <- stack(sen2020, ndvi_2020, srtm_10m, glcm$glcm_variance)
+set.seed(66)
+uc <- unsuperClass(sen2020, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
+plot(uc$map)
 
-# for multiple features with different scales - normalize data (substract mean & divide by standard deviation)
-stack_dem_feat <- stack(sen2020, dem_10m)
-set.seed(55)
-uc <- unsuperClass(sen2020, nClasses = 3, nStarts = 50, nSamples = 10000, norm = T)
 
-
+## Validation
 # stack classifications & plot for comparison
-class_stack <- stack(uc$map, uc_ndvi$map, uc_dem$map, uc_dem_feat$map, uc_glcm$map)
-names(class_stack) <- c("only raster","raster + ndvi","raster + dem","raster + dem features", "raster + contrast metric")
-
+class_stack <- stack(uc$map, uc_ndvi$map, uc_dem$map, uc_dem_feat$map, uc_glcm$map, uc$map)
+names(class_stack) <- c("only raster","raster + ndvi","raster + dem","raster + dem features", "raster + mean metric", "all features")
 plot(class_stack)
 
-#### TODO idea: aggregate pixels to objects - via majority filter? ####
-
-
-#### Validation ####
-# compare accuracy of different classifications
 # check if classification overlays with camp training data
-# validateMap(uc$map, td_aoi, responseCol = , nSamples = 500, mode = "classification", classMapping = NULL)
-
 # crop classification output to aoi
-uc_aoi <- crop(uc$map, extent(td_aoi_sf))
-uc_ndvi_aoi <- crop(uc_ndvi$map, extent(td_aoi_sf))
-uc_dem_aoi <- crop(uc_dem$map, extent(td_aoi_sf))
-uc_dem_feat_aoi <- crop(uc_dem_feat$map, extent(td_aoi_sf))
-sc_aoi <- crop(sc$map, extent(td_aoi_sf))
+uc_aoi <- crop(uc$map, extent(osm_aoi_sf))
+uc_ndvi_aoi <- crop(uc_ndvi$map, extent(osm_aoi_sf))
+uc_dem_aoi <- crop(uc_dem$map, extent(osm_aoi_sf))
+uc_dem_feat_aoi <- crop(uc_dem_feat$map, extent(osm_aoi_sf))
+sc_aoi <- crop(sc_20$map, extent(osm_aoi_sf))
 
 uc_aoi_stack <- stack(uc_aoi, uc_ndvi_aoi, uc_dem_aoi, uc_dem_feat_aoi, sc_aoi)
 names(uc_aoi_stack) <- c("UC Sen2020","UC Sen2020 + NDVI", "UC Sen2020 + DEM", "UC Sen2020 + DEM features", "SC")
-plot(uc_aoi_stack)
-
-
-#### TODO####
-# hierarchical clustering
-# first: classify urban, soil & vegetated areas
-# mask out other classes than urban
-# further classify urban
-
-
-# idea: Threshold Based Raster Classification
-# http://neonscience.github.io/neon-data-institute-2016//R/classify-by-threshold-R/
+plot(uc_aoi_stack) # camp difficult to identify due to high spectral variability in scene
 
 
 
-#### OBIA ####
-# segmentation
-# divide image into superpixels - group of pixels which are similar in color and other low level properties
-library(OpenImageR)
-# https://www.r-bloggers.com/2020/03/analyzing-remote-sensing-data-using-image-segmentation/
-
-# https://fickse.wordpress.com/2015/06/18/quick-and-dirty-object-based-segmentation-in-r/
-# segment image & use properties of pixel groups (average color, or variablity, or texture) as classification input
-
-
-# simple: threshold of one band
-# blue band - best results
-plot(sen2020[[1]])
-plot(sen2020[[1]] >= 10000) 
-
-# green band
-plot(sen2020[[2]])
-plot(sen2020[[2]] >= 11000) 
-
-# red band
-plot(sen2020[[3]])
-plot(sen2020[[3]] >= 14000)
-
-# NIR band
-plot(sen2020[[4]])
-plot(sen2020[[4]] >= 17000)
-
-# dem
-plot(dem_10m)
-plot(dem_10m < 1200)
-
-#### TODO #### account for super high reflectance of metal roof? - illumination correction? radcor "illu"
-
-
-## image segmentation
-# do segmentation in QGIS ?
-
-# https://www.r-bloggers.com/2020/03/analyzing-remote-sensing-data-using-image-segmentation/
-# superpixels - group of pixels similar to each other in color & other low level properties
-# simple linear iterative clustering
-library(OpenImageR)
-
-# use bands green,red & NIR
-array_sen2020 <- raster::as.array(sen2020[[2:4]])
-region_slic <- superpixels(input_image = array_sen2020, method = "slic", superpixel = 80,
-                          compactness = 30, return_slic_data = TRUE,
-                          return_labels = TRUE, write_slic = "",
-                          verbose = FALSE)
-
-sen2020_jpg <- readImage("data/gif_images/Sentinel-2 L1C image on 2020-05-15.jpg")
-region_slic <- superpixels(input_image = sen2020_jpg, method = "slic", superpixel = 60,
-                           compactness = 3, return_slic_data = TRUE,
-                           return_labels = TRUE, write_slic = "",
-                           verbose = FALSE)
-
-imageShow(region_slic$slic_data)
-plot(region_slic$slic_data)
-
-str(ndvi_2020)
-
-# convert ndvi data into matrix
-ndvi_mat <- matrix(ndvi_2020@data@values,
-                   nrow = ndvi_2020@nrows,
-                   ncol = ndvi_2020@ncols, byrow = TRUE)
-
-
-
-#### masking ####
-# idea: flag image with probability that pixel belongs to a camp, according to certain variables: slope, ndvi, high change between 2016 and 2018
-# alternatively via thresholding:
-# http://neonscience.github.io/neon-data-institute-2016//R/mask-raster-threshold-R/
-
-
-#### Hierarchical classification ####
+#### Hierarchical classification / Masking ####
 # based on threshold masking for multiple metrics
 # search for areas with low ndvi, low height/slope, high change & high textural variation
 
-## 1. dem - height values
-# create mask - filter out high height values via DEM
-plot(dem_10m)
-hist(dem_10m)
-dem_mask <- dem_10m
+## 1. VIIRS - identify built-up areas
+plot(viirs_10m)
+hist(viirs_10m)
+viirs_mask <- viirs_10m
 
-demq <- raster::quantile(dem_10m, probs = 0.85)
+viirsq <- raster::quantile(viirs_10m, probs = 0.3)
+viirs_mask[viirs_mask < viirsq] <- NA
+plot(viirs_mask)
+
+# check if AOI still in mask
+ggR(viirs_mask) + geom_sf(data= osm_aoi_sf, aes(alpha = 0.2), fill = "red")
+
+# filter raster data according to viirs mask
+sen2020_viirs_mask <- mask(sen2020, viirs_mask)
+plot(sen2020_viirs_mask)
+
+
+## 2. DEM - height values
+# create mask - filter out high height values via DEM
+plot(srtm_10m)
+hist(srtm_10m)
+dem_mask <- srtm_10m
+
+demq <- raster::quantile(srtm_10m, probs = 0.85)
 dem_mask[dem_mask > demq] <- NA
 plot(dem_mask)
 
@@ -638,12 +495,13 @@ sen2020_dem_mask <- mask(sen2020, dem_mask)
 plot(sen2020_dem_mask)
 
 
-## 2. MSAVI - better for soily areas in Xianjiang
+## 3. MSAVI - better for soily areas in Xianjiang
 msavi_mask <- msavi_2020
 hist(msavi_mask)
+plot(msavi_mask)
 
-# mask according to 0.9 quantile
-msaviq <- raster::quantile(msavi_2020, probs = 0.8)
+# mask according to 0.8 quantile
+msaviq <- raster::quantile(msavi_2020, probs = 0.7)
 
 msavi_mask[((msavi_mask > msaviq) )] <- NA # vegetated areas
 plot(msavi_mask)
@@ -652,7 +510,7 @@ plot(msavi_mask)
 m <- raster::aggregate(msavi_mask, fact =3, fun = modal, na.rm = TRUE, expand = F)
 plot(m)
 # resample to get same extent as original raster
-# belinear performs better than nearest neighbor
+# bilinear performs better than nearest neighbor
 me <- resample(m, sen2020, method = "bilinear")
 
 # filter raster data according to NDVI mask
@@ -660,11 +518,7 @@ sen2020_msavi_mask <- mask(sen2020, me)
 plot(sen2020_msavi_mask)
 
 
-## 3. CVA - filter out areas with little change between 2017 and 2020
-# different values ranges of DN values for 2017 & 2020 image - stretch images to value range of 0-255 (8 bit)
-# sen2017_stretch <- stretch(sen2017, minv=0, maxv=255, minq=0, maxq=1)
-# sen2020_stretch <- stretch(sen2020, minv=0, maxv=255, minq=0, maxq=1)
-
+## 4. CVA - filter out areas with little change between 2017 and 2020
 # analyze bands with highest difference
 cva <- rasterCVA(sen2017[[c(2,11)]], sen2020[[c(2,11)]])
 plot(cva)
@@ -684,118 +538,83 @@ plot(cva_mask)
 c <- raster::aggregate(cva_mask, fact = 9, fun = modal, na.rm = TRUE, expand = F)
 plot(c)
 # resample to get same extent as original raster
-# belinear performs better than nearest neighbor
+# bilinear performs better than nearest neighbor
 ce <- resample(c, sen2020, method = "bilinear")
 
 sen2020_cva_mask <- mask(sen2020, ce$magnitude)
 plot(sen2020_cva_mask)
 
 
-## 4. texture
-## PCA - reduce data
-pca_20 <- rasterPCA(sen2020)$map
+## 5. texture
+# mask areas with low variance (as camps have high variability due to roofing, multiple buildings of different types & sizes, fences etc.)
+plot(glcm) # glcm variance differentiates camps & fields best
+hist(glcm$glcm_variance)
+plot(glcm$glcm_variance)
 
-# # 3 x 3 moving window (30 x 30 m) (as spatial resolution (=pixel size) of 10m)
-# # 90 m2 as minimum building size?
-# # or minimum camp size? - 29 * 29
-# min(td_camps$area) # 9510 m²
-# 
-# ## Focal 
-# window <- matrix(1, nrow = 3, ncol = 3)
-# # variance within each window
-# sen2020_pca_var <- focal(pca_20[[1]], w = window, fun = var)
-# plot(pca_20[[1]])
-# plot(sen2020_pca_var)
-# 
-
-## GLCM metrics
-library(glcm)
-glcm <- glcm(sen2020[[1]], window = c(5,5), shift = c(1, 1),
-             statistics = c("mean", "variance", "homogeneity", "contrast",
-                            "dissimilarity", "entropy", "second_moment", "correlation"))
-plot(glcm) # metric mean shows highest variation for camps
-
-# mask areas with low homogeneity & high contrast
-plot(glcm$glcm_mean)
-hist(glcm$glcm_mean)
-
-glcm_mask <- glcm$glcm_mean
+glcm_mask <- glcm$glcm_variance
 # create mask - filter out high areas
-glcmq<- raster::quantile(glcm_mask, probs = 0.9)
+glcmq <- raster::quantile(glcm_mask, probs = 0.85)
 glcm_mask[glcm_mask < glcmq] <- NA
 plot(glcm_mask)
 
-sen2020_glcm_mask <- mask(sen2020, glcm_mask)
-plot(sen2020_glcm_mask)
+# aggregate by a factor of 3, with "modal" (to reduce speckle effect)
+g <- raster::aggregate(glcm_mask, fact = 3, fun = modal, na.rm = TRUE, expand = F)
+plot(g)
+# resample to get same extent as original raster
+# bilinear performs better than nearest neighbor
+ge <- resample(g, sen2020, method = "bilinear")
 
-#### TODO: water mask ####
-# high reflectance difference between water & urban in higher wavelengths
+# filter raster data according to NDVI mask
+sen2020_glcm_mask <- mask(sen2020, ge)
+plot(sen2020_glcm_mask)
 
 
 ## final classification output
-# 1.DEM
-sen2020_class <- sen2020_dem_mask
+# 1. VIIRS
+sen2020_class <- sen2020_viirs_mask
 
-# 2. MSAVI
-sen2020_class_msavi <- mask(sen2020_class, me)
-# check if NDBI performs better #### TODO ####
+# 2. DEM
+sen2020_class_dem <- mask(sen2020_class, dem_mask)
 
-# 3. CVA
+# 3. MSAVI
+sen2020_class_msavi <- mask(sen2020_class_dem, me)
+
+# 4. CVA
 sen2020_class_cva <- mask(sen2020_class_msavi, ce$magnitude)
-# maybe use Change only between 2017 & 2018 (to avoid bigger LCC) #### TODO ####
 
-# 4. texture - mean (as camps have high relfectance values e.g. due to metal roofing)
-sen2020_class_tex <- mask(sen2020_class_cva, glcm_mask)
+# 5. texture - mean (as camps have high reflectance values e.g. due to metal roofing)
+sen2020_class_tex <- mask(sen2020_class_cva, ge)
 
 # plot classification output
 plot(sen2020_class_tex)
 plotRGB(sen2020_class_tex, 4, 3, 2, stretch = "lin")
+
 
 # form patches of pixels with 8-neighbor rule
 sen2020_class_patch <- clump(sen2020_class_tex$B1, directions=8)
 
 # vectorize output raster
 class_vector <- rasterToPolygons(sen2020_class_patch, dissolve = T)
-#class_vector_sf <- st_as_sf(class_vector, as_points = F, merge = F)
 
 # calculate area of polygons
 class_vector$area <- area(class_vector)
-#class_vector_sf$area <- st_area(class_vector_sf)
 
 # drop smallest vectors
 max(class_vector$area)
 min(class_vector$area)
 hist(class_vector$area)
 
-areamin <- min(td_camps$area) # 9510 m²
 class_area <- class_vector
-# filter out areas smaller than minimum camp size
-class_area <- class_area[class_area$area > areamin,]
+plot(class_vector)
+areamin <- min(osm_camps$area) # 6985 m²
+# # for analysis of smaller camps only filter out areas bigger than min. camp size
+# class_area <- class_area[class_area$area > areamin,] 
+areaq <- raster::quantile(class_area$area, probs = 0.8)
+class_area <- class_area[class_area$area > areaq,] 
 plot(class_area)
 
-# dissolve overlapping polygons
-library(rgeos)
-class_area$overlap <- gIntersects(class_area, byid = T)
-class_overlap <- subset(class_area, overlap == "TRUE")
+class_area_sf <- st_as_sf(class_area)
 
-
-
-#### visualization ####
-# animation with raster images on how camp was built
-# jpg images from sentinel hub, less than 1% cloud cover
-library(purrr) 
-library(magick)
-
-# make gif to visualize construction of camp
-con_gif <- list.files(path = "data/gif_images/", pattern = "*.jpg", full.names = T) %>% 
-  map(image_read) %>% 
-  image_join() %>% 
-  #image_crop("500x500") %>%
-  image_annotate("Dabancheng, Ürümqi, Xinjiang (China): March 2017 - March 2020", location = "+10+10", size = 20, color = "white") %>%
-  image_animate(fps=2) %>% 
-  image_write("construction.gif")
-
-
-
-#### time series ####
-# https://www.neonscience.org/resources/learning-hub/tutorials/dc-raster-time-series-r
+# plot final masking output with AOI 
+ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
+  geom_sf(data = class_area_sf , aes(alpha = 0.2), fill = "red")
