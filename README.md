@@ -39,4 +39,4 @@ The hierarchical classification using a multi-criterion masking procedure correc
 
 ## **Outlook**
 For further analysis it might be interesting to look into additional features of the re-education camps besides their size, as e.g. their minimum distance to urban structures and road infrastructure. 
-Additionally, an Object-Based Image Analysis using segmentation might be interesting to use the full potential of the 15-meter spatial resolution bands of the Sentinel-2 data.
+Additionally, an Object-Based Image Analysis using segmentation could be useful to exploit the full potential of the 15-meter spatial resolution bands of the Sentinel-2 satellite data.
