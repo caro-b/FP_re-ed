@@ -2,7 +2,7 @@
 # **Final Project on Re-education Camps in Xinjiang**
 
 ## **Background**
-The purpose of this script is to analyze re-education camps in the Xinjiang region in which the Chinese government is interning Moslem minorities.
+The purpose of this script is to analyze re-education camps in the Xinjiang region in which the Chinese government is interning Muslim minorities.
 Until now the detection of these camps is mainly done manually by journalists reviewing various articles, press releases etc. which is quite a time-consuming task.
 Therefore, this script explores methods to detect these camps more automatically by combining features from multiple data sources. 
 ![Re-education Camps in Xinjiang, China](data/figures/camps_xinjiang.png)
