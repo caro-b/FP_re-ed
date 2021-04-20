@@ -6,7 +6,7 @@ The purpose of this script is to analyze re-education camps in the Xinjiang regi
 Until now the detection of these camps is mainly done manually by journalists reviewing various articles, press releases etc. which is quite a time-consuming task.
 Therefore this script explores methods to detect these camps more automatically by combining features from multiple data sources. 
 
-## **Analysis **
+## **Analysis**
 This analysis focuses on the biggest known re-education camp in Dabancheng, but may be enhanced and applied as a basis for further analyses and bigger areas of interest.
 Scenes from two years 2017 and 2020 are used as during this timeframe the most camps were built and mostly fully constructed.
 It must be mentioned that this analysis is only applicable to newly constructed camps, not to those for which the building had already existed but was only transferred to a camp from a former usage type.
@@ -14,7 +14,7 @@ It must be mentioned that this analysis is only applicable to newly constructed 
 Data sources:
 Natural Earth, OSM, Sentinel2 (ESA), SRTM (NASA), VIIRS (NASA)
 
-![Re-education Camp Change 2017 - 2021](figures/concruction.gif)
+![Re-education Camp Change 2017 - 2021](data/figures/construction.gif)
 
 
 ## **Outlook**
