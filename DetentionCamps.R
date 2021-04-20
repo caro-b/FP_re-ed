@@ -328,7 +328,7 @@ con_gif <- list.files(path = "data/gif_images/", pattern = "*.jpg", full.names =
   map(image_read) %>% 
   image_join() %>% 
   #image_crop("500x500") %>%
-  image_annotate("Dabancheng, Ürümqi, Xinjiang (China): March 2017 - March 2020", location = "+10+10", size = 20, color = "white") %>%
+  image_annotate("Dabancheng, Ürümqi, Xinjiang (China): March 2017 - March 2021", location = "+10+10", size = 20, color = "white") %>%
   image_animate(fps=2) %>% 
   image_write("construction.gif")
 
