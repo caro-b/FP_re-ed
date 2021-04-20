@@ -6,7 +6,7 @@ The purpose of this script is to analyze re-education camps in the Xinjiang regi
 Until now the detection of these camps is mainly done manually by journalists reviewing various articles, press releases etc. which is quite a time-consuming task.
 Therefore, this script explores methods to detect these camps more automatically by combining features from multiple data sources. 
 
-![Re-education Camps in Xianjing, China](data/figures/camps_xinjiang.png)
+![Re-education Camps in Xinjaing, China](data/figures/camps_xinjiang.png)
 
 
 ## **Analysis**
@@ -41,4 +41,4 @@ The hierarchical classification using a multi-criterion masking procedure correc
 
 ## **Outlook**
 For further analysis it might be interesting to look into additional features of the re-education camps besides their size, as e.g. their minimum distance to urban structures and road infrastructure. 
-Additionally, an Object-Based Image Analysis using segmentation might be interesting to use the full potential of the 15 meter spatial resolution bands of the Sentinel-2 data.
+Additionally, an Object-Based Image Analysis using segmentation might be interesting to use the full potential of the 15-meter spatial resolution bands of the Sentinel-2 data.
