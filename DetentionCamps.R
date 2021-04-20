@@ -1,14 +1,15 @@
-# Purpose of script:
-# analysis of re-education in camps in the Xinjiang region where the Chinese government is interning the Moslem minorities
+# Purpose of the script:
+# analysis of re-education camps in the Xinjiang region where the Chinese government is interning the Moslem minorities
 # until now the camp detection is mainly done manually therefore this script offers methods to detect camps in a more automatic way
-# data sources: Natural Earth, OSM, Sentinel2 (ESA), STRM (NASA), VIIRS (NASA)
+# this analysis focuses on the biggest known re-education camp in Dabancheng, but may be enhanced & applied to other & bigger study areas
+# Data sources: Natural Earth, OSM, Sentinel2 (ESA), SRTM (NASA), VIIRS (NASA)
 # Author: Caroline Busse
 # Date: April, 2021
 # R version: 4.0.5
 
 
-#### PACKAGES ####
-
+#### SETUP ####
+## Packages
 # install required packages if needed
 packagelist <- c("dplyr","glcm","ggmap","ggplot2","magick","osmdata","purrr","raster","readr","rgdal","rgee","rnaturalearth","RStoolbox","sf","sp","tidyverse","zoo")
 new.packages <- packagelist[!(packagelist %in% installed.packages()[,"Package"])]
@@ -16,6 +17,14 @@ if(length(new.packages)) install.packages(new.packages)
 
 # Load required packages
 lapply(packagelist, require, character.only = TRUE)
+
+
+## setup connection with Google Earth Engine
+# run this part individually per line (don't run it as full script)
+# need to setup a GEE account 
+ee_install()
+# restart R session afterwards
+ee_Initialize()
 
 
 
@@ -94,8 +103,6 @@ plot(srtm)
 ## VIIRS - Nightlights data 
 # to map built-up areas
 # download from Google Earth Engine
-ee_install() # only has to be done the first time
-ee_Initialize()
 
 # finding images
 point <- ee$Geometry$Point(88.2924,43.3827)
@@ -271,7 +278,7 @@ ggplot(data = camps_join) +
 # check projection
 crs(sen2020)
 crs(sen2020)
-crs(srtm_crop)
+crs(srtm)
 crs(viirs_raster)
 crs(osm_camps)
 
@@ -373,7 +380,7 @@ plot(srtm_slope)
 pca_20 <- rasterPCA(sen2020)$map
 plot(pca_20) 
 
-# GLCM (grey-level co-occurrence matrices)
+# glcm_pca (grey-level co-occurrence matrices)
 glcm_pca <- glcm(pca_20[[1]], window = c(5,5), shift = c(1, 1),
              statistics = c("mean", "variance", "homogeneity", "contrast",
                             "dissimilarity", "entropy", "second_moment", "correlation"))
@@ -427,13 +434,13 @@ uc_dem_feat <- unsuperClass(stack_dem_feat, nClasses = 4, nStarts = 50, nSamples
 plot(uc_dem_feat$map)
 
 # 4. textural metrics as input
-stack_glcm <- stack(sen2020, glcm$glcm_variance)
+stack_glcm_pca <- stack(sen2020, glcm_pca$glcm_variance)
 set.seed(55)
-uc_glcm <- unsuperClass(glcm$glcm_variance, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
-plot(uc_glcm$map)
+uc_glcm_pca <- unsuperClass(glcm_pca$glcm_variance, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
+plot(uc_glcm_pca$map)
 
 # 5. combination of all features
-stack_dem_feat <- stack(sen2020, ndvi_2020, srtm_10m, glcm$glcm_variance)
+stack_dem_feat <- stack(sen2020, ndvi_2020, srtm_10m, glcm_pca$glcm_variance)
 set.seed(66)
 uc <- unsuperClass(sen2020, nClasses = 4, nStarts = 50, nSamples = 10000, norm = T)
 plot(uc$map)
@@ -441,7 +448,7 @@ plot(uc$map)
 
 ## Validation
 # stack classifications & plot for comparison
-class_stack <- stack(uc$map, uc_ndvi$map, uc_dem$map, uc_dem_feat$map, uc_glcm$map, uc$map)
+class_stack <- stack(uc$map, uc_ndvi$map, uc_dem$map, uc_dem_feat$map, uc_glcm_pca$map, uc$map)
 names(class_stack) <- c("only raster","raster + ndvi","raster + dem","raster + dem features", "raster + mean metric", "all features")
 plot(class_stack)
 
@@ -459,7 +466,7 @@ plot(uc_aoi_stack) # camp difficult to identify due to high spectral variability
 
 
 
-#### Hierarchical classification / Masking ####
+#### HIERARCHICAL CLASSIFICATION / MASKING ####
 # based on threshold masking for multiple metrics
 # search for areas with low ndvi, low height/slope, high change & high textural variation
 
@@ -547,18 +554,18 @@ plot(sen2020_cva_mask)
 
 ## 5. texture
 # mask areas with low variance (as camps have high variability due to roofing, multiple buildings of different types & sizes, fences etc.)
-plot(glcm) # glcm variance differentiates camps & fields best
-hist(glcm$glcm_variance)
-plot(glcm$glcm_variance)
+plot(glcm_pca) # glcm_pca variance differentiates camps & fields best
+hist(glcm_pca$glcm_variance)
+plot(glcm_pca$glcm_variance)
 
-glcm_mask <- glcm$glcm_variance
+glcm_pca_mask <- glcm_pca$glcm_variance
 # create mask - filter out high areas
-glcmq <- raster::quantile(glcm_mask, probs = 0.85)
-glcm_mask[glcm_mask < glcmq] <- NA
-plot(glcm_mask)
+glcm_pcaq <- raster::quantile(glcm_pca_mask, probs = 0.3)
+glcm_pca_mask[glcm_pca_mask < glcm_pcaq] <- NA
+plot(glcm_pca_mask)
 
 # aggregate by a factor of 3, with "modal" (to reduce speckle effect)
-g <- raster::aggregate(glcm_mask, fact = 3, fun = modal, na.rm = TRUE, expand = F)
+g <- raster::aggregate(glcm_pca_mask, fact = 3, fun = modal, na.rm = TRUE, expand = F)
 plot(g)
 # resample to get same extent as original raster
 # bilinear performs better than nearest neighbor
@@ -609,8 +616,8 @@ plot(class_vector)
 areamin <- min(osm_camps$area) # 6985 m²
 # # for analysis of smaller camps only filter out areas bigger than min. camp size
 # class_area <- class_area[class_area$area > areamin,] 
-areaq <- raster::quantile(class_area$area, probs = 0.8)
-class_area <- class_area[class_area$area > areaq,] 
+#areaq <- raster::quantile(class_area$area, probs = 0.9)
+class_area <- class_area[class_area$area >= max(class_vector$area),] 
 plot(class_area)
 
 class_area_sf <- st_as_sf(class_area)
