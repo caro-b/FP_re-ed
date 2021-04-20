@@ -63,16 +63,6 @@ china$NAME_1
 # filter on extent of Xianjiang
 xianjiang <- china[china$NAME_1 == "Xinjiang Uygur",]
 
-# crop raster to extent of vector data
-raster_xianjiang <- crop(raster_10m, xianjiang)
-
-compareCRS(raster_xianjiang, camps_osm_pol)
-
-# vector data on top of raster data
-ggR(raster_xianjiang) +
-  geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
-  geom_point(data=camps_osm_pol, aes(x=long, y=lat), col = "red", size = 2)
-
 
 ## CAMP DATA
 # https://xjdp.aspi.org.au/data/?tab=datasets#resources;xinjiangs-detention-facilities
@@ -293,6 +283,9 @@ osm_aoi_sf <- osm_camps_sf[osm_camps_sf$area == max(osm_camps_sf$area),]
 
 
 #### CROPPING ####
+# crop raster to extent of vector data
+raster_xianjiang <- crop(raster_10m, xianjiang)
+
 sen2020 <- crop(sen2020, extent(sen2017))
 
 # crop dem to same extent as raster data
@@ -313,13 +306,35 @@ plot(viirs_10m)
 
 
 #### PLOTTING ####
+## plot raster data
 plotRGB(sen2017, 4, 3, 2, stretch = "lin")
 plotRGB(sen2020, 4, 3, 2, stretch = "lin")
 
 # plot AOI 
-ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
-  geom_sf(data= osm_aoi_sf, aes(alpha = 0.2), fill = "red")
+plot_aoi <- ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
+  geom_sf(data = osm_aoi_sf, aes(alpha = 0.2), fill = "red") +
+  ggtitle("Re-education Camp in Dabancheng, Ürümqi (Xinjiang)") +
+  theme(legend.position = "none") +
+  xlab("Longitude") +
+  ylab("Latitude")
 
+ggsave("plot_aoi.png", plot_aoi)
+
+
+## plot all known camps in Xinjiang
+compareCRS(raster_xianjiang, camps_osm_pol)
+
+# vector data on top of raster data
+camps_xinjiang <- ggR(raster_xianjiang) +
+  geom_polygon(data=xianjiang, aes(x=long, y=lat), alpha=0.2, col = "pink", fill ="pink") +
+  geom_point(data=camps_osm_pol, aes(x=long, y=lat), col = "red", size = 2) +
+  ggtitle("Re-education Camps in Xinjiang, China") +
+  xlab("Longitude") +
+  ylab("Latitude")
+
+
+ggsave("camps_xinjiang.png", camps_xinjiang)
+ 
 
 ## animation with raster images on how camp was built
 # jpg images from sentinel hub, less than 1% cloud cover
@@ -349,7 +364,7 @@ plot(savi_2020)
 savi_2017 <- spectralIndices(sen2017, red = 4, nir = 5, indices = "SAVI")
 plot(savi_2017)
 
-# 3. MSAVI (Modified Soil Adjusted Vegetation Index))
+# 3. MSAVI (Modified Soil Adjusted Vegetation Index)
 msavi_2020 <- spectralIndices(sen2020, red = 4, nir = 5, indices = "MSAVI")
 plot(msavi_2020) # doesn't return better result as camp area detected as slightly vegetated
 
@@ -502,27 +517,27 @@ sen2020_dem_mask <- mask(sen2020, dem_mask)
 plot(sen2020_dem_mask)
 
 
-## 3. MSAVI - better for soily areas in Xianjiang
-msavi_mask <- msavi_2020
-hist(msavi_mask)
-plot(msavi_mask)
+## 3. SAVI - better for soily areas in Xianjiang
+savi_mask <- savi_2020
+hist(savi_mask)
+plot(savi_mask)
 
 # mask according to 0.8 quantile
-msaviq <- raster::quantile(msavi_2020, probs = 0.7)
+saviq <- raster::quantile(savi_2020, probs = 0.8)
 
-msavi_mask[((msavi_mask > msaviq) )] <- NA # vegetated areas
-plot(msavi_mask)
+savi_mask[((savi_mask > saviq) )] <- NA # vegetated areas
+plot(savi_mask)
 
 # aggregate by a factor of 3, with "modal" (to reduce speckle effect)
-m <- raster::aggregate(msavi_mask, fact =3, fun = modal, na.rm = TRUE, expand = F)
+m <- raster::aggregate(savi_mask, fact =3, fun = modal, na.rm = TRUE, expand = F)
 plot(m)
 # resample to get same extent as original raster
 # bilinear performs better than nearest neighbor
 me <- resample(m, sen2020, method = "bilinear")
 
 # filter raster data according to NDVI mask
-sen2020_msavi_mask <- mask(sen2020, me)
-plot(sen2020_msavi_mask)
+sen2020_savi_mask <- mask(sen2020, me)
+plot(sen2020_savi_mask)
 
 
 ## 4. CVA - filter out areas with little change between 2017 and 2020
@@ -552,7 +567,7 @@ sen2020_cva_mask <- mask(sen2020, ce$magnitude)
 plot(sen2020_cva_mask)
 
 
-## 5. texture
+## 5. Texture
 # mask areas with low variance (as camps have high variability due to roofing, multiple buildings of different types & sizes, fences etc.)
 plot(glcm_pca) # glcm_pca variance differentiates camps & fields best
 hist(glcm_pca$glcm_variance)
@@ -583,13 +598,13 @@ sen2020_class <- sen2020_viirs_mask
 # 2. DEM
 sen2020_class_dem <- mask(sen2020_class, dem_mask)
 
-# 3. MSAVI
-sen2020_class_msavi <- mask(sen2020_class_dem, me)
+# 3. SAVI
+sen2020_class_savi <- mask(sen2020_class_dem, me)
 
 # 4. CVA
-sen2020_class_cva <- mask(sen2020_class_msavi, ce$magnitude)
+sen2020_class_cva <- mask(sen2020_class_savi, ce$magnitude)
 
-# 5. texture - mean (as camps have high reflectance values e.g. due to metal roofing)
+# 5. texture - variance (as camps have high reflectance values e.g. due to metal roofing)
 sen2020_class_tex <- mask(sen2020_class_cva, ge)
 
 # plot classification output
@@ -614,14 +629,19 @@ hist(class_vector$area)
 class_area <- class_vector
 plot(class_vector)
 areamin <- min(osm_camps$area) # 6985 m²
-# # for analysis of smaller camps only filter out areas bigger than min. camp size
-# class_area <- class_area[class_area$area > areamin,] 
-#areaq <- raster::quantile(class_area$area, probs = 0.9)
+# for analysis of smaller camps only filter out areas bigger than min. camp size
+
 class_area <- class_area[class_area$area >= max(class_vector$area),] 
 plot(class_area)
 
 class_area_sf <- st_as_sf(class_area)
 
 # plot final masking output with AOI 
-ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
-  geom_sf(data = class_area_sf , aes(alpha = 0.2), fill = "red")
+final_output <- ggRGB(sen2020, r=4, g=3, b=2, stretch = "lin") +
+  geom_sf(data = class_area_sf , aes(alpha = 0.2), fill = "red") +
+  ggtitle("Identified Camp Area via Hierarchical Classification") +
+  theme(legend.position = "none") +
+  xlab("Longitude") +
+  ylab("Latitude")
+
+ggsave("final_output.png", final_output)
