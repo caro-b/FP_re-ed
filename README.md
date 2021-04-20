@@ -1,5 +1,5 @@
 # FP_re-ed
-# **Final Project on Re-education camps in Xinjiang**
+# **Final Project on Re-education Camps in Xinjiang**
 
 ## **Background**
 The purpose of this script is to analyze re-education camps in the Xinjiang region in which the Chinese government is interning Moslem minorities.
