@@ -13,6 +13,7 @@ This analysis focuses on the biggest known re-education camp in Dabancheng, √úr√
 ![Sentinel-2 Scene (2020)](data/figures/plot_aoi.png)
 
 Sentinel-2 scenes from two years 2017 and 2020 are used as during this timeframe the most camps were built and mostly fully constructed.
+
 ![Re-education Camp Change 2017 - 2021](data/figures/construction.gif)
 
 It must be mentioned that this analysis is only applicable to newly constructed camps, not to those for which the building had already existed but was only transferred to a camp from a former usage type.
